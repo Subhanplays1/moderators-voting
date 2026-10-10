@@ -17,13 +17,20 @@ export async function analyzeStory(workspaceId: string, url: string) {
   let pollData: { id?: string; question: string; options: string[]; mediaId?: string; pollId?: string } | null = null;
   let rawMetadata: any = null;
 
-  // 1. Try to fetch real Story poll from Instagram using connected account's sessionid
-  const connectedAccount = await db.instagramAccount.findFirst({
+  let connectedAccount = await db.instagramAccount.findFirst({
     where: { workspaceId, status: 'CONNECTED', encryptedToken: { not: null } },
     orderBy: { updatedAt: 'desc' }
   });
 
+  if (!connectedAccount) {
+    connectedAccount = await db.instagramAccount.findFirst({
+      where: { status: 'CONNECTED', encryptedToken: { not: null } },
+      orderBy: { updatedAt: 'desc' }
+    });
+  }
+
   let sessionId = '';
+  let errorMessage = '';
   if (connectedAccount?.encryptedToken) {
     try {
       const decrypted = decrypt(connectedAccount.encryptedToken);
@@ -123,9 +130,17 @@ export async function analyzeStory(workspaceId: string, url: string) {
             };
             console.log(`[Story Analyzer] Successfully extracted live quiz: "${question}", options:`, options);
           }
+        } else {
+          errorMessage = 'No poll or quiz stickers found on this story.';
         }
       } else {
-        console.warn(`[Story Analyzer] Media info endpoint returned status ${mediaRes.status}`);
+        const errText = await mediaRes.text().catch(() => '');
+        console.warn(`[Story Analyzer] Media info endpoint returned status ${mediaRes.status}:`, errText);
+        if (mediaRes.status === 403 || mediaRes.status === 401 || errText.includes('login_required')) {
+          errorMessage = 'Instagram session expired (You were logged out). Please re-connect your Instagram account in Accounts, or use Manual Poll Entry below.';
+        } else {
+          errorMessage = `Instagram returned error (${mediaRes.status}). Use Manual Poll Entry below to proceed.`;
+        }
       }
     } catch (err) {
       console.error('[Story Analyzer] Error in direct media info lookup:', err);
@@ -244,7 +259,11 @@ export async function analyzeStory(workspaceId: string, url: string) {
     };
   }
 
-  return { story, poll: null };
+  return { 
+    story, 
+    poll: null, 
+    error: errorMessage || (!sessionId ? 'No connected Instagram account found. Please connect an account in Accounts or use Manual Poll Entry.' : 'No poll sticker detected on this Instagram Story. Try Manual Poll Entry below.')
+  };
 }
 
 export async function createManualPoll(workspaceId: string, data: { question: string; options: string[] }) {

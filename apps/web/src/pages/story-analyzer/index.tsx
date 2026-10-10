@@ -225,11 +225,30 @@ export function StoryAnalyzer() {
 
       {/* Analysis Error Notification */}
       {error && (
-        <Card className="border-red-500/20 bg-red-500/10 rounded-2xl p-4 flex items-start gap-3">
-          <AlertTriangle className="text-red-400 shrink-0 mt-0.5" size={18} />
-          <div>
-            <p className="text-sm font-bold text-red-400">Notice</p>
-            <p className="text-xs text-zinc-300 mt-0.5">{error}</p>
+        <Card className="border-red-500/20 bg-red-500/10 rounded-2xl p-4 flex flex-col sm:flex-row items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="text-red-400 shrink-0 mt-0.5" size={18} />
+            <div>
+              <p className="text-sm font-bold text-red-400">Notice</p>
+              <p className="text-xs text-zinc-300 mt-0.5">{error}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+            <Button 
+              size="sm" 
+              variant="outline" 
+              onClick={() => navigate('/accounts')} 
+              className="text-xs border-white/10 hover:bg-white/10 text-white rounded-xl h-8"
+            >
+              Manage Accounts
+            </Button>
+            <Button 
+              size="sm" 
+              onClick={() => setIsManual(true)} 
+              className="text-xs bg-pink-600 hover:bg-pink-500 text-white rounded-xl h-8"
+            >
+              Manual Poll Entry
+            </Button>
           </div>
         </Card>
       )}
