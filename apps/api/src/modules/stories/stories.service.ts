@@ -67,7 +67,15 @@ export async function analyzeStory(workspaceId: string, url: string) {
       console.log(`[Story Analyzer] Fetching real media info for story ID ${targetMediaId}...`);
       const mediaRes = await fetch(`https://i.instagram.com/api/v1/media/${targetMediaId}/info/`, { headers: storyHeaders });
       if (mediaRes.ok) {
-        const json: any = await mediaRes.json();
+        const rawText = await mediaRes.text();
+        // Extract 64-bit poll_id losslessly via regex before JSON.parse to prevent precision loss
+        const pollIdMatch = rawText.match(/"poll_id"\s*:\s*"?([0-9]+)"?/);
+        const regexPollId = pollIdMatch ? pollIdMatch[1] : '';
+
+        const quizIdMatch = rawText.match(/"quiz_id"\s*:\s*"?([0-9]+)"?/);
+        const regexQuizId = quizIdMatch ? quizIdMatch[1] : '';
+
+        const json: any = JSON.parse(rawText);
         const targetItem = json.items?.[0];
         if (targetItem) {
           const polls = targetItem.story_polls || targetItem.story_poll_v2s || targetItem.poll_stickers || [];
@@ -79,27 +87,29 @@ export async function analyzeStory(workspaceId: string, url: string) {
               ? tallies.map((t: any) => typeof t === 'string' ? t : (t.text || 'Option'))
               : ['Yes', 'No'];
             
-            const extractedPollId = String(pollObj.poll_id || pollObj.id || '');
-            const fullMediaId = String(targetItem.id || targetItem.pk || targetMediaId);
+            // Prefer regexPollId to avoid JS float64 precision loss on 64-bit IDs!
+            const extractedPollId = regexPollId || String(pollObj.poll_id || pollObj.id || '');
+            const cleanMediaPk = targetMediaId || (targetItem.id ? String(targetItem.id).split('_')[0] : '');
+            const fullMediaId = targetItem.id ? String(targetItem.id) : (cleanMediaPk ? `${cleanMediaPk}_${targetItem.user?.pk || ''}` : '');
 
             pollData = {
               id: extractedPollId || String(Date.now()),
               question,
               options,
-              mediaId: fullMediaId,
+              mediaId: fullMediaId || cleanMediaPk,
               pollId: extractedPollId
             };
 
             rawMetadata = {
-              mediaId: fullMediaId,
-              pk: String(targetItem.pk || targetMediaId),
+              mediaId: fullMediaId || cleanMediaPk,
+              pk: cleanMediaPk,
               pollId: extractedPollId,
               userPk: String(targetItem.user?.pk || ''),
               username: targetUsername || targetItem.user?.username || '',
               question,
               options
             };
-            console.log(`[Story Analyzer] Successfully extracted live poll: "${question}", options:`, options);
+            console.log(`[Story Analyzer] Successfully extracted live poll: "${question}", pollId: ${extractedPollId}, pk: ${cleanMediaPk}`);
           } else if (targetItem.story_quizs && targetItem.story_quizs.length > 0) {
             const quizObj = targetItem.story_quizs[0].quiz_sticker || targetItem.story_quizs[0];
             const question = quizObj.question || 'Instagram Story Quiz';
@@ -108,27 +118,28 @@ export async function analyzeStory(workspaceId: string, url: string) {
               ? tallies.map((t: any) => typeof t === 'string' ? t : (t.text || 'Option'))
               : ['Option A', 'Option B'];
             
-            const extractedPollId = String(quizObj.quiz_id || quizObj.id || '');
-            const fullMediaId = String(targetItem.id || targetItem.pk || targetMediaId);
+            const extractedPollId = regexQuizId || String(quizObj.quiz_id || quizObj.id || '');
+            const cleanMediaPk = targetMediaId || (targetItem.id ? String(targetItem.id).split('_')[0] : '');
+            const fullMediaId = targetItem.id ? String(targetItem.id) : (cleanMediaPk ? `${cleanMediaPk}_${targetItem.user?.pk || ''}` : '');
 
             pollData = {
               id: extractedPollId || String(Date.now()),
               question,
               options,
-              mediaId: fullMediaId,
+              mediaId: fullMediaId || cleanMediaPk,
               pollId: extractedPollId
             };
 
             rawMetadata = {
-              mediaId: fullMediaId,
-              pk: String(targetItem.pk || targetMediaId),
+              mediaId: fullMediaId || cleanMediaPk,
+              pk: cleanMediaPk,
               pollId: extractedPollId,
               userPk: String(targetItem.user?.pk || ''),
               username: targetUsername || targetItem.user?.username || '',
               question,
               options
             };
-            console.log(`[Story Analyzer] Successfully extracted live quiz: "${question}", options:`, options);
+            console.log(`[Story Analyzer] Successfully extracted live quiz: "${question}", quizId: ${extractedPollId}`);
           }
         } else {
           errorMessage = 'No poll or quiz stickers found on this story.';

@@ -2,6 +2,14 @@ import { db } from '@moderators/database';
 import { getInstagramProvider } from '../../providers/instagram';
 import { wsManager } from '../../websocket/manager';
 import https from 'https';
+import crypto from 'crypto';
+
+const IG_SIG_KEY = '19ce5f445dbfd9d29c59dc2a78c616a7fc090a8e018b9267bc4240a30244c53b';
+const SIG_KEY_VERSION = '4';
+
+function generateSignature(data: string): string {
+  return crypto.createHmac('sha256', IG_SIG_KEY).update(data).digest('hex');
+}
 
 function submitInstagramStoryVote(params: {
   sessionId: string;
@@ -13,10 +21,18 @@ function submitInstagramStoryVote(params: {
     const uid = params.sessionId.split('%3A')[0] || params.sessionId.split(':')[0] || '';
     const payload = {
       _uid: uid,
+      _uuid: crypto.randomUUID(),
       radio_type: 'wifi-none',
       vote: String(params.voteIndex),
     };
-    const body = `signed_body=SIGNATURE.${encodeURIComponent(JSON.stringify(payload))}`;
+    const jsonParams = JSON.stringify(payload);
+    const hashSig = generateSignature(jsonParams);
+    const signedBody = `${hashSig}.${jsonParams}`;
+
+    const body = new URLSearchParams({
+      ig_sig_key_version: SIG_KEY_VERSION,
+      signed_body: signedBody,
+    }).toString();
 
     const req = https.request({
       hostname: 'i.instagram.com',
@@ -212,7 +228,7 @@ async function processSessionAsync(workspaceId: string, sessionId: string) {
           voteSuccess = false;
           console.warn(`[Sessions Service] Cannot vote on own story: voter ${voterUid} == author ${storyUserPk}`);
         } else if (sessionCookie && (mediaId || rawPk) && pollId) {
-          const targetMedia = rawPk || mediaId.split('_')[0] || mediaId;
+          const targetMedia = mediaId.split('_')[0] || rawPk || mediaId;
           console.log(`[Sessions Service] Sending real Instagram vote to media ${targetMedia}, poll ${pollId}, index ${voteIndex} for ${accItem.account.username}...`);
 
           const voteRes = await submitInstagramStoryVote({
