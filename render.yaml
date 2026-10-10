@@ -13,9 +13,9 @@ services:
       - key: FRONTEND_URL
         value: https://dist-one-nu-24.vercel.app
       - key: DATABASE_URL
-        sync: false
+        value: postgresql://neondb_owner:npg_FvtoN3kjsB2A@ep-ancient-glade-b5fmcqzb-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
       - key: JWT_SECRET
-        generateValue: true
+        value: 8f4e2b1a9c3d7e5f6a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f
       - key: JWT_EXPIRES_IN
         value: 7d
       - key: ENCRYPTION_KEY
