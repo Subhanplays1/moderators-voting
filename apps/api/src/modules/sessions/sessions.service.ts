@@ -166,12 +166,14 @@ async function processSessionAsync(workspaceId: string, sessionId: string) {
   let mediaId = '';
   let pollId = session.pollId;
   let rawPk = '';
+  let storyUserPk = '';
   try {
     if (session.poll?.story?.metadata) {
       const meta = typeof session.poll.story.metadata === 'string' ? JSON.parse(session.poll.story.metadata) : session.poll.story.metadata;
       if (meta?.mediaId) mediaId = String(meta.mediaId);
       if (meta?.pollId) pollId = String(meta.pollId);
       if (meta?.pk) rawPk = String(meta.pk);
+      if (meta?.userPk) storyUserPk = String(meta.userPk);
     }
   } catch {}
 
@@ -199,7 +201,14 @@ async function processSessionAsync(workspaceId: string, sessionId: string) {
           sessionCookie = parsed.sessionid || '';
         }
 
-        if (sessionCookie && (mediaId || rawPk) && pollId) {
+        const voterUid = sessionCookie.split('%3A')[0] || sessionCookie.split(':')[0] || '';
+
+        // Prevent voting on own story (Instagram rejects self-voting with 403)
+        if (storyUserPk && voterUid === storyUserPk) {
+          voteError = 'Self-voting blocked: Instagram does not allow voting on your own story.';
+          voteSuccess = false;
+          console.warn(`[Sessions Service] Cannot vote on own story: voter ${voterUid} == author ${storyUserPk}`);
+        } else if (sessionCookie && (mediaId || rawPk) && pollId) {
           const targetMedia = rawPk || mediaId.split('_')[0] || mediaId;
           console.log(`[Sessions Service] Sending real Instagram vote to media ${targetMedia}, poll ${pollId}, index ${voteIndex} for ${accItem.account.username}...`);
 
