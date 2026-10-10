@@ -41,9 +41,12 @@ function submitInstagramStoryVote(params: {
           if (res.statusCode === 200 && json?.status === 'ok') {
             resolve({ success: true, status: res.statusCode, data: json });
           } else {
-            const errMsg = json?.message === 'login_required' 
-              ? 'Instagram session expired (login_required). Please re-enter sessionid in Accounts.' 
-              : (json?.message || `Instagram returned HTTP ${res.statusCode}`);
+            let errMsg = json?.message || `Instagram returned HTTP ${res.statusCode}`;
+            if (json?.message?.includes('wait a few minutes') || rawData.includes('wait a few minutes')) {
+              errMsg = 'Instagram Rate Limit: Please wait 5-10 minutes before trying again.';
+            } else if (json?.message === 'login_required') {
+              errMsg = 'Instagram session expired (login_required). Please re-enter sessionid in Accounts.';
+            }
             resolve({ success: false, status: res.statusCode, error: errMsg, data: json });
           }
         } catch {
@@ -233,6 +236,15 @@ async function processSessionAsync(workspaceId: string, sessionId: string) {
                 data: {
                   status: 'DISCONNECTED',
                   statusMessage: 'Session expired (login_required). Please re-enter Session ID.',
+                  lastCheckedAt: new Date()
+                }
+              }).catch(() => {});
+            } else if (voteRes.error?.includes('Rate Limit') || voteRes.data?.message?.includes('wait a few minutes')) {
+              await db.instagramAccount.update({
+                where: { id: accItem.account.id },
+                data: {
+                  status: 'CONNECTED',
+                  statusMessage: 'Temporary Cooldown: Please wait 5-10 minutes.',
                   lastCheckedAt: new Date()
                 }
               }).catch(() => {});
