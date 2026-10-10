@@ -3,7 +3,7 @@ services:
     name: moderators-api
     runtime: node
     plan: free
-    buildCommand: pnpm install --frozen-lockfile=false && pnpm --filter @moderators/database db:generate
+    buildCommand: pnpm install --frozen-lockfile=false --prod=false && pnpm --filter @moderators/database db:generate
     startCommand: pnpm --filter api start
     envVars:
       - key: NODE_ENV

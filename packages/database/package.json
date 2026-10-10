@@ -16,11 +16,11 @@
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^6.4.1",
     "@types/pg": "^8.23.1",
-    "pg": "^8.23.1"
+    "pg": "^8.23.1",
+    "prisma": "^6.4.1"
   },
   "devDependencies": {
     "dotenv": "^16.4.5",
-    "prisma": "^6.4.1",
     "tsx": "^4.19.0"
   }
 }

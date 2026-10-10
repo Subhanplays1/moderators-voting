@@ -2,7 +2,7 @@ import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 
   (window.location.hostname.includes('vercel.app') 
-    ? 'https://guy-dover-wealth-comes.trycloudflare.com' 
+    ? 'https://moderators-api.onrender.com' 
     : '');
 
 
