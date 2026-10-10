@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: moderators-api
+    runtime: node
+    plan: free
+    buildCommand: pnpm install --frozen-lockfile=false && pnpm --filter @moderators/database db:generate
+    startCommand: pnpm --filter api start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: FRONTEND_URL
+        value: https://dist-one-nu-24.vercel.app
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 7d
+      - key: ENCRYPTION_KEY
+        value: 0123456789abcdef0123456789abcdef
+      - key: INSTAGRAM_PROVIDER
+        value: mock

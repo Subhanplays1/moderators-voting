@@ -1,0 +1,1 @@
+export function ScreenshotUpload() { return <div className="text-white p-4">Component: ScreenshotUpload</div>; }

@@ -1,0 +1,1 @@
+export function SessionDetail() { return <div className="text-white p-4">Page: SessionDetail</div>; }

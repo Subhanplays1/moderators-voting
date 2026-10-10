@@ -1,0 +1,1 @@
+export function Profile() { return <div className="text-white p-4">Page: Profile</div>; }

@@ -1,0 +1,1 @@
+export function RecentActivity() { return <div className="text-white p-4">Component: RecentActivity</div>; }

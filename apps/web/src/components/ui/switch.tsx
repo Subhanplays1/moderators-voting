@@ -1,0 +1,1 @@
+export function Switch() { return <div className="text-white p-4">Component: Switch</div>; }

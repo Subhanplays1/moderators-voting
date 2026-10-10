@@ -1,0 +1,1 @@
+export function EmptyState() { return <div className="text-white p-4">Component: EmptyState</div>; }

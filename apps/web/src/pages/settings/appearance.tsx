@@ -1,0 +1,1 @@
+export function Appearance() { return <div className="text-white p-4">Page: Appearance</div>; }

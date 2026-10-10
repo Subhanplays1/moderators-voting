@@ -1,0 +1,1 @@
+export function Tooltip() { return <div className="text-white p-4">Component: Tooltip</div>; }

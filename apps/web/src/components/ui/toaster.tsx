@@ -1,0 +1,1 @@
+export function Toaster() { return <div className="text-white p-4">Component: Toaster</div>; }

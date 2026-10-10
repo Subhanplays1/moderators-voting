@@ -1,0 +1,1 @@
+export function ResetPassword() { return <div className="text-white p-4">Page: ResetPassword</div>; }

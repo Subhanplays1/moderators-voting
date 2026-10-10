@@ -1,0 +1,1 @@
+export function Textarea() { return <div className="text-white p-4">Component: Textarea</div>; }

@@ -1,0 +1,1 @@
+export function ConfirmDialog() { return <div className="text-white p-4">Component: ConfirmDialog</div>; }

@@ -1,0 +1,1 @@
+export function LoadingOverlay() { return <div className="text-white p-4">Component: LoadingOverlay</div>; }

@@ -1,0 +1,1 @@
+export function AccountDetail() { return <div className="text-white p-4">Page: AccountDetail</div>; }

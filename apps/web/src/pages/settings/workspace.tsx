@@ -1,0 +1,1 @@
+export function Workspace() { return <div className="text-white p-4">Page: Workspace</div>; }

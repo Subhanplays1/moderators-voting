@@ -1,0 +1,1 @@
+export function Header() { return <div className="text-white p-4">Component: Header</div>; }

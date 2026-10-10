@@ -1,0 +1,1 @@
+export function PollResult() { return <div className="text-white p-4">Component: PollResult</div>; }

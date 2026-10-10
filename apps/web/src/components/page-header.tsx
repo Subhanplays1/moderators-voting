@@ -1,0 +1,1 @@
+export function PageHeader() { return <div className="text-white p-4">Component: PageHeader</div>; }

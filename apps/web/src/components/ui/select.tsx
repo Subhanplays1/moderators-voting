@@ -1,0 +1,1 @@
+export function Select() { return <div className="text-white p-4">Component: Select</div>; }

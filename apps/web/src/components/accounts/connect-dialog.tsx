@@ -1,0 +1,1 @@
+export function ConnectDialog() { return <div className="text-white p-4">Component: ConnectDialog</div>; }

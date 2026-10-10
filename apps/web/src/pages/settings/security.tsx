@@ -1,0 +1,1 @@
+export function Security() { return <div className="text-white p-4">Page: Security</div>; }

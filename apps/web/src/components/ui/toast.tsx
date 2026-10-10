@@ -1,0 +1,1 @@
+export function Toast() { return <div className="text-white p-4">Component: Toast</div>; }

@@ -1,0 +1,1 @@
+export function HealthIndicator() { return <div className="text-white p-4">Component: HealthIndicator</div>; }

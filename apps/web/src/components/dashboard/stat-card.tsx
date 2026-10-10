@@ -1,0 +1,1 @@
+export function StatCard() { return <div className="text-white p-4">Component: StatCard</div>; }

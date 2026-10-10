@@ -1,0 +1,1 @@
+export function StatusBadge() { return <div className="text-white p-4">Component: StatusBadge</div>; }

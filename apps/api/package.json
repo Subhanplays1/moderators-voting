@@ -1,0 +1,37 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "description": "MODERATORS Fastify backend API",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "nodemon",
+    "build": "echo 'No build step required with tsx'",
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.0",
+    "@fastify/cors": "^10.0.0",
+    "@fastify/helmet": "^13.0.0",
+    "@fastify/multipart": "^9.0.0",
+    "@fastify/rate-limit": "^10.0.0",
+    "@fastify/websocket": "^11.0.0",
+    "@moderators/database": "workspace:*",
+    "@moderators/shared": "workspace:*",
+    "@types/pg": "^8.23.1",
+    "argon2": "^0.41.1",
+    "csv-parse": "^5.6.0",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.2.0",
+    "fastify-type-provider-zod": "^4.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.23.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/node": "^20.11.0",
+    "nodemon": "^3.0.3",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

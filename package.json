@@ -1,0 +1,21 @@
+{
+  "name": "moderators",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "db:generate": "turbo db:generate",
+    "db:migrate": "turbo db:migrate",
+    "db:seed": "turbo db:seed",
+    "db:studio": "pnpm --filter @moderators/database db:studio",
+    "clean": "turbo clean"
+  },
+  "devDependencies": {
+    "turbo": "^2.4.2",
+    "typescript": "^5.7.3"
+  }
+}

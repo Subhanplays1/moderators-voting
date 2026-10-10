@@ -1,0 +1,316 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// Enums
+// ==========================================
+
+enum GlobalRole {
+  SUPER_ADMIN
+  USER
+}
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MODERATOR
+  VIEWER
+}
+
+enum AccountStatus {
+  CONNECTED
+  PENDING
+  DISCONNECTED
+  REAUTH_REQUIRED
+  ERROR
+}
+
+enum SessionStatus {
+  DRAFT
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum SessionAccountStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum AuthProvider {
+  INSTAGRAM_GRAPH_API
+  INSTAGRAM_BASIC_DISPLAY
+  MANUAL
+}
+
+enum AuthRecordStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  ERROR
+}
+
+// ==========================================
+// Models
+// ==========================================
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  name         String
+  avatar       String?
+  globalRole   GlobalRole @default(USER) @map("global_role")
+  isActive     Boolean    @default(true) @map("is_active")
+  lastLoginAt  DateTime?  @map("last_login_at")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  // Password reset
+  resetToken      String?   @map("reset_token")
+  resetTokenExpiry DateTime? @map("reset_token_expiry")
+
+  // Relations
+  workspaceMembers WorkspaceMember[]
+  ownedWorkspaces  Workspace[]        @relation("WorkspaceOwner")
+  activityLogs     ActivityLog[]
+  addedAccounts    InstagramAccount[] @relation("AccountAddedBy")
+  createdSessions  VotingSession[]    @relation("SessionCreatedBy")
+  sentInvitations  Invitation[]       @relation("InvitationSentBy")
+
+  @@map("users")
+}
+
+model Workspace {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  ownerId   String   @map("owner_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  owner              User               @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members            WorkspaceMember[]
+  instagramAccounts  InstagramAccount[]
+  stories            Story[]
+  votingSessions     VotingSession[]
+  activityLogs       ActivityLog[]
+  invitations        Invitation[]
+
+  @@index([ownerId])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(uuid())
+  workspaceId String        @map("workspace_id")
+  userId      String        @map("user_id")
+  role        WorkspaceRole @default(VIEWER)
+  isActive    Boolean       @default(true) @map("is_active")
+  joinedAt    DateTime      @default(now()) @map("joined_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("workspace_members")
+}
+
+model InstagramAccount {
+  id              String        @id @default(uuid())
+  workspaceId     String        @map("workspace_id")
+  username        String
+  displayName     String?       @map("display_name")
+  status          AccountStatus @default(PENDING)
+  encryptedToken  String?       @map("encrypted_token")
+  profilePicture  String?       @map("profile_picture")
+  addedById       String        @map("added_by_id")
+  lastCheckedAt   DateTime?     @map("last_checked_at")
+  statusMessage   String?       @map("status_message")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  workspace             Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  addedBy               User                   @relation("AccountAddedBy", fields: [addedById], references: [id])
+  authenticationRecords AuthenticationRecord[]
+  sessionAccounts       VotingSessionAccount[]
+
+  @@unique([workspaceId, username])
+  @@index([workspaceId])
+  @@index([status])
+  @@index([addedById])
+  @@map("instagram_accounts")
+}
+
+model Story {
+  id             String   @id @default(uuid())
+  workspaceId    String   @map("workspace_id")
+  url            String?
+  screenshotPath String?  @map("screenshot_path")
+  metadata       Json?
+  analyzedAt     DateTime? @map("analyzed_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  poll      Poll?
+
+  @@index([workspaceId])
+  @@map("stories")
+}
+
+model Poll {
+  id         String   @id @default(uuid())
+  storyId    String   @unique @map("story_id")
+  question   String
+  options    Json     // Array of { id: string, text: string }
+  confidence Float    @default(0)
+  detectedAt DateTime @default(now()) @map("detected_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  // Relations
+  story          Story          @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  votingSessions VotingSession[]
+
+  @@map("polls")
+}
+
+model VotingSession {
+  id             String        @id @default(uuid())
+  workspaceId    String        @map("workspace_id")
+  pollId         String        @map("poll_id")
+  name           String?
+  selectedOption String        @map("selected_option") // The option ID to vote for
+  status         SessionStatus @default(DRAFT)
+  totalAccounts  Int           @default(0) @map("total_accounts")
+  completed      Int           @default(0)
+  failed         Int           @default(0)
+  createdById    String        @map("created_by_id")
+  startedAt      DateTime?     @map("started_at")
+  completedAt    DateTime?     @map("completed_at")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  workspace       Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  poll            Poll                   @relation(fields: [pollId], references: [id])
+  createdBy       User                   @relation("SessionCreatedBy", fields: [createdById], references: [id])
+  sessionAccounts VotingSessionAccount[]
+
+  @@index([workspaceId])
+  @@index([status])
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("voting_sessions")
+}
+
+model VotingSessionAccount {
+  id          String               @id @default(uuid())
+  sessionId   String               @map("session_id")
+  accountId   String               @map("account_id")
+  status      SessionAccountStatus @default(PENDING)
+  error       String?
+  startedAt   DateTime?            @map("started_at")
+  completedAt DateTime?            @map("completed_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  // Relations
+  session VotingSession    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  account InstagramAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, accountId])
+  @@index([sessionId])
+  @@index([accountId])
+  @@index([status])
+  @@map("voting_session_accounts")
+}
+
+model ActivityLog {
+  id          String   @id @default(uuid())
+  workspaceId String?  @map("workspace_id")
+  userId      String?  @map("user_id")
+  action      String
+  target      String?
+  status      String   @default("success")
+  ip          String?
+  userAgent   String?  @map("user_agent")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model Invitation {
+  id          String           @id @default(uuid())
+  workspaceId String           @map("workspace_id")
+  email       String
+  role        WorkspaceRole    @default(MODERATOR)
+  token       String           @unique
+  status      InvitationStatus @default(PENDING)
+  invitedById String           @map("invited_by_id")
+  expiresAt   DateTime         @map("expires_at")
+  acceptedAt  DateTime?        @map("accepted_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+
+  // Relations
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy User      @relation("InvitationSentBy", fields: [invitedById], references: [id])
+
+  @@index([workspaceId])
+  @@index([email])
+  @@index([token])
+  @@map("invitations")
+}
+
+model AuthenticationRecord {
+  id                String           @id @default(uuid())
+  accountId         String           @map("account_id")
+  provider          AuthProvider     @default(MANUAL)
+  status            AuthRecordStatus @default(ACTIVE)
+  lastAuthenticated DateTime?        @map("last_authenticated")
+  expiresAt         DateTime?        @map("expires_at")
+  metadata          Json?
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  // Relations
+  account InstagramAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([status])
+  @@map("authentication_records")
+}

@@ -1,0 +1,1 @@
+export function Avatar() { return <div className="text-white p-4">Component: Avatar</div>; }

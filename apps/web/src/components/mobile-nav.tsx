@@ -1,0 +1,1 @@
+export function MobileNav() { return <div className="text-white p-4">Component: MobileNav</div>; }

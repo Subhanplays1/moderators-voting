@@ -1,0 +1,1 @@
+export function SessionsChart() { return <div className="text-white p-4">Component: SessionsChart</div>; }
