@@ -27,7 +27,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       return res.data;
     },
-    onSuccess: () => refetch()
+    onSuccess: async () => {
+      await refetch();
+    }
   });
 
   const logoutMutation = useMutation({

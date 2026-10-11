@@ -22,9 +22,11 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // Only redirect if it is not the initial authentication status check
+    // Only redirect if a 401 is received, it's not the /auth/me check, and we currently have a token
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/me')) {
-      if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+      const hadToken = !!localStorage.getItem('token');
+      localStorage.removeItem('token');
+      if (hadToken && window.location.pathname !== '/login' && window.location.pathname !== '/register') {
         window.location.href = '/login';
       }
     }

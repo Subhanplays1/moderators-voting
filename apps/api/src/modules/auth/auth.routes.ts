@@ -13,7 +13,13 @@ export default async function authRoutes(app: FastifyInstance) {
     try {
       const { user, token } = await authService.login(email, password);
       await logActivity({ userId: user.id, action: 'login', status: 'success', ip: req.ip });
-      reply.setCookie('token', token, { httpOnly: true, path: '/' });
+      reply.setCookie('token', token, { 
+        httpOnly: true, 
+        path: '/', 
+        sameSite: 'none', 
+        secure: true, 
+        maxAge: 7 * 24 * 60 * 60 
+      });
       const safeUser = { id: user.id, email: user.email, name: user.name };
       return reply.send({ user: safeUser, token });
     } catch (error) {
@@ -25,7 +31,13 @@ export default async function authRoutes(app: FastifyInstance) {
     try {
       const { user, token } = await authService.register(req.body);
       await logActivity({ userId: user.id, action: 'register', status: 'success', ip: req.ip });
-      reply.setCookie('token', token, { httpOnly: true, path: '/' });
+      reply.setCookie('token', token, { 
+        httpOnly: true, 
+        path: '/', 
+        sameSite: 'none', 
+        secure: true, 
+        maxAge: 7 * 24 * 60 * 60 
+      });
       const safeUser = { id: user.id, email: user.email, name: user.name };
       return reply.send({ user: safeUser, token });
     } catch (error: any) {
@@ -38,7 +50,7 @@ export default async function authRoutes(app: FastifyInstance) {
   });
 
   server.post('/logout', async (req, reply) => {
-    reply.clearCookie('token', { path: '/' });
+    reply.clearCookie('token', { path: '/', sameSite: 'none', secure: true });
     return reply.send({ success: true });
   });
 
