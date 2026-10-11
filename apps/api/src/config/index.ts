@@ -10,7 +10,7 @@ dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 const envSchema = z.object({
   DATABASE_URL: z.string().default('postgresql://user:password@localhost:5432/moderators?schema=public'),
   JWT_SECRET: z.string().default('your-jwt-secret-min-32-chars-long-change-this'),
-  JWT_EXPIRES_IN: z.string().default('1d'),
+  JWT_EXPIRES_IN: z.string().default('365d'),
   ENCRYPTION_KEY: z.string().min(16).default('0123456789abcdef0123456789abcdef'),
   PORT: z.coerce.number().default(3001),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),

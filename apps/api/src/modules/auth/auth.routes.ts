@@ -18,7 +18,7 @@ export default async function authRoutes(app: FastifyInstance) {
         path: '/', 
         sameSite: 'none', 
         secure: true, 
-        maxAge: 7 * 24 * 60 * 60 
+        maxAge: 365 * 24 * 60 * 60 
       });
       const safeUser = { id: user.id, email: user.email, name: user.name };
       return reply.send({ user: safeUser, token });
@@ -36,7 +36,7 @@ export default async function authRoutes(app: FastifyInstance) {
         path: '/', 
         sameSite: 'none', 
         secure: true, 
-        maxAge: 7 * 24 * 60 * 60 
+        maxAge: 365 * 24 * 60 * 60 
       });
       const safeUser = { id: user.id, email: user.email, name: user.name };
       return reply.send({ user: safeUser, token });
