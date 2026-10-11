@@ -18,66 +18,111 @@ function submitInstagramStoryVote(params: {
   voteIndex: number;
 }): Promise<{ success: boolean; status?: number; data?: any; error?: string }> {
   return new Promise((resolve) => {
-    const uid = params.sessionId.split('%3A')[0] || params.sessionId.split(':')[0] || '';
-    const payload = {
-      _uid: uid,
-      _uuid: crypto.randomUUID(),
-      radio_type: 'wifi-none',
-      vote: String(params.voteIndex),
-    };
-    const jsonParams = JSON.stringify(payload);
-    const hashSig = generateSignature(jsonParams);
-    const signedBody = `${hashSig}.${jsonParams}`;
-
-    const body = new URLSearchParams({
-      ig_sig_key_version: SIG_KEY_VERSION,
-      signed_body: signedBody,
+    // 1. Try Instagram Web Story Poll Vote (Matches Chrome PC session without triggering Android device mismatch)
+    const webReqBody = new URLSearchParams({
+      vote: String(params.voteIndex)
     }).toString();
 
-    const req = https.request({
-      hostname: 'i.instagram.com',
+    const webReq = https.request({
+      hostname: 'www.instagram.com',
       port: 443,
       path: `/api/v1/media/${params.mediaId}/${params.pollId}/story_poll_vote/`,
       method: 'POST',
       headers: {
-        'User-Agent': 'Instagram 361.0.0.46.88 Android (28/9; 300dpi; 900x1600; Asus; ASUS_Z01QD; ASUS_Z01QD; intel; en_US; 674675155)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Cookie': `sessionid=${params.sessionId};`,
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'Content-Length': Buffer.byteLength(body),
+        'X-IG-App-ID': '936619743392459',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Referer': 'https://www.instagram.com/',
+        'Origin': 'https://www.instagram.com',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(webReqBody),
         'Accept': '*/*',
         'Connection': 'close',
       }
-    }, (res) => {
-      let rawData = '';
-      res.on('data', chunk => rawData += chunk);
-      res.on('end', () => {
+    }, (webRes) => {
+      let webData = '';
+      webRes.on('data', chunk => webData += chunk);
+      webRes.on('end', () => {
         try {
-          const json = JSON.parse(rawData);
-          console.log(`[Sessions Service] Instagram Vote HTTP ${res.statusCode}:`, json);
-          if ((res.statusCode === 200 && json?.status === 'ok') || json?.message === 'Viewer has already voted') {
-            resolve({ success: true, status: 200, data: json });
-          } else {
-            let errMsg = json?.message || `Instagram returned HTTP ${res.statusCode}`;
-            if (json?.message?.includes('wait a few minutes') || rawData.includes('wait a few minutes')) {
-              errMsg = 'Instagram Rate Limit: Please wait 5-10 minutes before trying again.';
-            } else if (json?.message === 'login_required' || json?.message === 'user_has_logged_out') {
-              errMsg = 'Instagram session expired (login_required). Please re-enter sessionid in Accounts.';
-            }
-            resolve({ success: false, status: res.statusCode, error: errMsg, data: json });
+          const json = JSON.parse(webData);
+          console.log(`[Sessions Service] Instagram Web Vote HTTP ${webRes.statusCode}:`, json);
+          if ((webRes.statusCode === 200 && json?.status === 'ok') || json?.message === 'Viewer has already voted') {
+            return resolve({ success: true, status: 200, data: json });
           }
-        } catch {
-          resolve({ success: false, status: res.statusCode, error: `Invalid response from Instagram (HTTP ${res.statusCode})` });
-        }
+        } catch {}
+
+        // 2. Fallback to signed mobile API if Web did not complete
+        const uid = params.sessionId.split('%3A')[0] || params.sessionId.split(':')[0] || '';
+        const payload = {
+          _uid: uid,
+          _uuid: crypto.randomUUID(),
+          radio_type: 'wifi-none',
+          vote: String(params.voteIndex),
+        };
+        const jsonParams = JSON.stringify(payload);
+        const hashSig = generateSignature(jsonParams);
+        const signedBody = `${hashSig}.${jsonParams}`;
+
+        const body = new URLSearchParams({
+          ig_sig_key_version: SIG_KEY_VERSION,
+          signed_body: signedBody,
+        }).toString();
+
+        const req = https.request({
+          hostname: 'i.instagram.com',
+          port: 443,
+          path: `/api/v1/media/${params.mediaId}/${params.pollId}/story_poll_vote/`,
+          method: 'POST',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Cookie': `sessionid=${params.sessionId};`,
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Content-Length': Buffer.byteLength(body),
+            'Accept': '*/*',
+            'Connection': 'close',
+          }
+        }, (res) => {
+          let rawData = '';
+          res.on('data', chunk => rawData += chunk);
+          res.on('end', () => {
+            try {
+              const json = JSON.parse(rawData);
+              console.log(`[Sessions Service] Instagram Vote HTTP ${res.statusCode}:`, json);
+              if ((res.statusCode === 200 && json?.status === 'ok') || json?.message === 'Viewer has already voted') {
+                resolve({ success: true, status: 200, data: json });
+              } else {
+                let errMsg = json?.message || `Instagram returned HTTP ${res.statusCode}`;
+                if (json?.message?.includes('wait a few minutes') || rawData.includes('wait a few minutes')) {
+                  errMsg = 'Instagram Rate Limit: Please wait 5-10 minutes before trying again.';
+                } else if (json?.message === 'login_required' || json?.message === 'user_has_logged_out') {
+                  errMsg = 'Instagram session expired (login_required). Please re-enter sessionid in Accounts.';
+                }
+                resolve({ success: false, status: res.statusCode, error: errMsg, data: json });
+              }
+            } catch {
+              resolve({ success: false, status: res.statusCode, error: `Invalid response from Instagram (HTTP ${res.statusCode})` });
+            }
+          });
+        });
+
+        req.on('error', (err) => {
+          console.error('[Sessions Service] Instagram Request Error:', err);
+          resolve({ success: false, error: err.message });
+        });
+
+        req.write(body);
+        req.end();
       });
     });
 
-    req.on('error', (err) => {
-      console.error('[Sessions Service] Instagram Request Error:', err);
-      resolve({ success: false, error: err.message });
+    webReq.on('error', (err) => {
+      console.error('[Sessions Service] Instagram Web Vote Error:', err);
+      resolve({ success: false, error: 'Web voting request failed' });
     });
 
-    req.write(body);
-    req.end();
+    webReq.write(webReqBody);
+    webReq.end();
   });
 }
 
