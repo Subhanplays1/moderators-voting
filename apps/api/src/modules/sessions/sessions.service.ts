@@ -11,6 +11,13 @@ function generateSignature(data: string): string {
   return crypto.createHmac('sha256', IG_SIG_KEY).update(data).digest('hex');
 }
 
+function getCsrfToken(cookieStr: string): string {
+  const match = cookieStr.match(/csrftoken=([^;]+)/);
+  if (match) return match[1];
+  // Instagram accepts generated 32-char hex CSRF tokens if set in cookie
+  return crypto.randomBytes(16).toString('hex');
+}
+
 function submitInstagramStoryVote(params: {
   sessionId: string;
   mediaId: string;
@@ -18,7 +25,12 @@ function submitInstagramStoryVote(params: {
   voteIndex: number;
 }): Promise<{ success: boolean; status?: number; data?: any; error?: string }> {
   return new Promise((resolve) => {
-    // 1. Try Instagram Web Story Poll Vote (Matches Chrome PC session without triggering Android device mismatch)
+    const csrfToken = getCsrfToken(params.sessionId);
+    const fullCookie = params.sessionId.includes('csrftoken=') 
+      ? params.sessionId 
+      : `csrftoken=${csrfToken}; ${params.sessionId.startsWith('sessionid=') ? params.sessionId : `sessionid=${params.sessionId};`}`;
+
+    // 1. Try Instagram Web Story Poll Vote with CSRF header & cookie
     const webReqBody = new URLSearchParams({
       vote: String(params.voteIndex)
     }).toString();
@@ -30,7 +42,8 @@ function submitInstagramStoryVote(params: {
       method: 'POST',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Cookie': `sessionid=${params.sessionId};`,
+        'Cookie': fullCookie,
+        'X-CSRFToken': csrfToken,
         'X-IG-App-ID': '936619743392459',
         'X-Requested-With': 'XMLHttpRequest',
         'Referer': 'https://www.instagram.com/',
@@ -44,15 +57,20 @@ function submitInstagramStoryVote(params: {
       let webData = '';
       webRes.on('data', chunk => webData += chunk);
       webRes.on('end', () => {
+        let isWebSuccess = false;
         try {
           const json = JSON.parse(webData);
           console.log(`[Sessions Service] Instagram Web Vote HTTP ${webRes.statusCode}:`, json);
           if ((webRes.statusCode === 200 && json?.status === 'ok') || json?.message === 'Viewer has already voted') {
+            isWebSuccess = true;
             return resolve({ success: true, status: 200, data: json });
           }
         } catch {}
 
-        // 2. Fallback to signed mobile API if Web did not complete
+        if (isWebSuccess) return;
+
+        // 2. If Web returned CSRF or other error, fallback to proven signed Mobile API
+        console.log(`[Sessions Service] Web vote did not complete, falling back to Signed Mobile API...`);
         const uid = params.sessionId.split('%3A')[0] || params.sessionId.split(':')[0] || '';
         const payload = {
           _uid: uid,
@@ -76,7 +94,7 @@ function submitInstagramStoryVote(params: {
           method: 'POST',
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Cookie': `sessionid=${params.sessionId};`,
+            'Cookie': `sessionid=${params.sessionId.replace(/^sessionid=/, '')};`,
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
             'Content-Length': Buffer.byteLength(body),
             'Accept': '*/*',
@@ -88,7 +106,7 @@ function submitInstagramStoryVote(params: {
           res.on('end', () => {
             try {
               const json = JSON.parse(rawData);
-              console.log(`[Sessions Service] Instagram Vote HTTP ${res.statusCode}:`, json);
+              console.log(`[Sessions Service] Instagram Mobile Vote HTTP ${res.statusCode}:`, json);
               if ((res.statusCode === 200 && json?.status === 'ok') || json?.message === 'Viewer has already voted') {
                 resolve({ success: true, status: 200, data: json });
               } else {
