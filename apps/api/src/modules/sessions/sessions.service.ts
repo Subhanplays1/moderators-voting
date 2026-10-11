@@ -54,13 +54,13 @@ function submitInstagramStoryVote(params: {
         try {
           const json = JSON.parse(rawData);
           console.log(`[Sessions Service] Instagram Vote HTTP ${res.statusCode}:`, json);
-          if (res.statusCode === 200 && json?.status === 'ok') {
-            resolve({ success: true, status: res.statusCode, data: json });
+          if ((res.statusCode === 200 && json?.status === 'ok') || json?.message === 'Viewer has already voted') {
+            resolve({ success: true, status: 200, data: json });
           } else {
             let errMsg = json?.message || `Instagram returned HTTP ${res.statusCode}`;
             if (json?.message?.includes('wait a few minutes') || rawData.includes('wait a few minutes')) {
               errMsg = 'Instagram Rate Limit: Please wait 5-10 minutes before trying again.';
-            } else if (json?.message === 'login_required') {
+            } else if (json?.message === 'login_required' || json?.message === 'user_has_logged_out') {
               errMsg = 'Instagram session expired (login_required). Please re-enter sessionid in Accounts.';
             }
             resolve({ success: false, status: res.statusCode, error: errMsg, data: json });
