@@ -13,10 +13,10 @@ export class InstagramBloksClient {
   private username: string;
   private password: string;
   private baseUrl = 'https://i.instagram.com/api/v1/bloks/apps/';
-  private baseDeviceId = 'android-ec40bd6622ac9b21';
-  private baseMachineId = 'Z5d97AABAAF0xC3_hhRHvlrYSyrM';
-  private baseHeaderDeviceId = '552233dc-9663-4973-82bc-b00ad110137a';
-  private baseHeaderFamilyDeviceId = 'd660a764-9ea5-4f2a-a358-ea3d5fa4bd8f';
+  private baseDeviceId: string;
+  private baseMachineId: string;
+  private baseHeaderDeviceId: string;
+  private baseHeaderFamilyDeviceId: string;
   private baseUserAgent = 'Instagram 361.0.0.46.88 Android (28/9; 300dpi; 900x1600; Asus; ASUS_Z01QD; ASUS_Z01QD; intel; en_US; 674675155)';
   private baseBlocksVersioningId = '16e9197b928710eafdf1e803935ed8c450a1a2e3eb696bff1184df088b900bcf';
 
@@ -26,6 +26,13 @@ export class InstagramBloksClient {
   constructor(username: string, password = '') {
     this.username = username.replace(/^@/, '').trim();
     this.password = password;
+    
+    // Generate unique Android device footprint per account/session attempt to prevent Instagram rate-limiting across accounts
+    const randHex = crypto.randomBytes(8).toString('hex');
+    this.baseDeviceId = `android-${randHex}`;
+    this.baseMachineId = crypto.randomBytes(16).toString('base64').replace(/[^a-zA-Z0-9_]/g, 'x');
+    this.baseHeaderDeviceId = crypto.randomUUID();
+    this.baseHeaderFamilyDeviceId = crypto.randomUUID();
   }
 
   private getHeaders() {
@@ -249,9 +256,103 @@ export class InstagramBloksClient {
       }
     }
 
+    // Fallback: Try official Web Login API if mobile Bloks did not yield a session
+    console.log('[Instagram Login] Bloks flow did not yield token, attempting Web AJAX fallback...');
+    const webResult = await this.tryWebLoginFallback();
+    if (webResult.status === 'SUCCESS' || webResult.status === '2FA') {
+      return webResult;
+    }
+
     return {
       status: 'ERROR',
-      message: 'Failed to authenticate with Instagram. Response error from API.',
+      message: webResult.message || 'Failed to authenticate with Instagram. Response error from API.',
+    };
+  }
+
+  /**
+   * Fallback: Authentic Instagram Web AJAX Login (Works when mobile bloks encounters consent or checkpoint)
+   */
+  async tryWebLoginFallback(): Promise<InstagramLoginResult> {
+    try {
+      const timestamp = Math.floor(Date.now() / 1000);
+      const initialRes = await axios.get('https://www.instagram.com/accounts/login/', {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        },
+        maxRedirects: 5,
+        validateStatus: () => true,
+      });
+
+      let csrfToken = 'missing';
+      const cookieHeader = initialRes.headers['set-cookie'] || [];
+      for (const c of cookieHeader) {
+        const m = c.match(/csrftoken=([^;]+)/);
+        if (m) csrfToken = m[1];
+      }
+
+      const postData = new URLSearchParams({
+        enc_password: `#PWD_INSTAGRAM_BROWSER:0:${timestamp}:${this.password}`,
+        optIntoOneTap: 'false',
+        queryParams: '{}',
+        trustedDeviceRecords: '{}',
+        username: this.username,
+      });
+
+      const loginRes = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/', postData.toString(), {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'X-CSRFToken': csrfToken,
+          'X-IG-App-ID': '936619743392459',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': 'https://www.instagram.com/accounts/login/',
+          'Origin': 'https://www.instagram.com',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': cookieHeader.map((c: string) => c.split(';')[0]).join('; '),
+        },
+        validateStatus: () => true,
+      });
+
+      const cookies = loginRes.headers['set-cookie'] || [];
+      let foundSessionId = '';
+      for (const c of cookies) {
+        const m = c.match(/sessionid=([^;]+)/);
+        if (m) foundSessionId = m[1];
+      }
+
+      if (foundSessionId || loginRes.data?.authenticated) {
+        const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ sessionid: foundSessionId })).toString('base64')}`;
+        return {
+          status: 'SUCCESS',
+          authorizationToken: authTok,
+          sessionId: foundSessionId,
+        };
+      }
+
+      if (loginRes.data?.two_factor_required) {
+        const twoFactorInfo = loginRes.data.two_factor_info;
+        this.currentDataContext = twoFactorInfo?.two_factor_identifier || '';
+        this.challengeType = '2FA';
+        return {
+          status: '2FA',
+          context: this.currentDataContext,
+          message: 'Two-Factor Authentication required. Enter the 6-digit code.',
+        };
+      }
+
+      if (loginRes.data?.message) {
+        return {
+          status: 'ERROR',
+          message: loginRes.data.message,
+        };
+      }
+    } catch (err: any) {
+      console.error('[Instagram Web Fallback Error]:', err.message);
+    }
+
+    return {
+      status: 'ERROR',
+      message: 'Instagram rejected login. Please check password or verify account in Instagram app.',
     };
   }
 
