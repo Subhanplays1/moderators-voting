@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { 
   Users, 
@@ -62,6 +62,32 @@ export function Accounts() {
   const [loginError, setLoginError] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
   const [sessionSuccessInfo, setSessionSuccessInfo] = useState<any>(null);
+  const [oauthLoading, setOauthLoading] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('oauth_success')) {
+      alert('Official Instagram Account connected successfully!');
+      window.history.replaceState({}, '', window.location.pathname);
+      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+    } else if (params.get('oauth_error')) {
+      alert(`Instagram Connection Error: ${params.get('oauth_error')}`);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [queryClient]);
+
+  const handleOfficialInstagramLogin = async () => {
+    try {
+      setOauthLoading(true);
+      const res = await api.get('/accounts/oauth/instagram/url');
+      if (res.data?.url) {
+        window.location.href = res.data.url;
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to start Official Instagram Login.');
+      setOauthLoading(false);
+    }
+  };
 
 
   const { data, isLoading } = useQuery({
@@ -285,13 +311,16 @@ export function Accounts() {
             </Button>
             <Button 
               variant="outline"
-              onClick={() => { 
-                const token = localStorage.getItem('token') || '';
-                window.location.href = `https://moderators-api.onrender.com/api/accounts/oauth/instagram/authorize?token=${encodeURIComponent(token)}`; 
-              }}
+              disabled={oauthLoading}
+              onClick={handleOfficialInstagramLogin}
               className="flex-1 sm:flex-initial text-xs sm:text-sm gap-2 h-11 px-4 rounded-xl border-white/10 hover:bg-white/5 text-zinc-300"
             >
-              <ExternalLink size={15} /> Official Instagram Login
+              {oauthLoading ? (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-pink-500 border-t-transparent" />
+              ) : (
+                <ExternalLink size={15} />
+              )}
+              Official Instagram Login
             </Button>
             <Button 
               variant="outline" 

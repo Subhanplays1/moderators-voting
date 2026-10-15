@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { InstagramProvider } from './types';
 import { config } from '../../config';
 
@@ -35,23 +34,33 @@ export class ProductionProvider implements InstagramProvider {
     form.append('redirect_uri', this.redirectUri);
     form.append('code', code);
 
-    const res = await axios.post('https://api.instagram.com/oauth/access_token', form, {
+    const res = await fetch('https://api.instagram.com/oauth/access_token', {
+      method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
     });
 
+    const data = await res.json() as any;
+    if (!res.ok) {
+      throw new Error(data.error_message || data.message || 'Failed to exchange Instagram OAuth token');
+    }
+
     return {
-      accessToken: res.data.access_token,
-      userId: res.data.user_id,
+      accessToken: data.access_token,
+      userId: data.user_id,
     };
   }
 
   async getAccountInfo(accessTokenOrUsername: string): Promise<any> {
     try {
       // Instagram Basic Display API endpoint
-      const res = await axios.get(
+      const res = await fetch(
         `https://graph.instagram.com/me?fields=id,username,account_type,media_count&access_token=${accessTokenOrUsername}`
       );
-      return res.data;
+      if (res.ok) {
+        return await res.json();
+      }
+      return { username: accessTokenOrUsername, status: 'Active' };
     } catch (err: any) {
       return { username: accessTokenOrUsername, status: 'Active' };
     }

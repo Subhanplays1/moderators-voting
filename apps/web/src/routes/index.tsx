@@ -51,5 +51,9 @@ export const router = createBrowserRouter([
       { path: '/settings', element: <Suspense fallback={<LoadingFallback />}><Settings /></Suspense> },
       { path: '/admin', element: <Suspense fallback={<LoadingFallback />}><Admin /></Suspense> },
     ]
+  },
+  {
+    path: '*',
+    element: <Navigate to="/dashboard" replace />
   }
 ]);
