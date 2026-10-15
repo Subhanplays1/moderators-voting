@@ -68,12 +68,16 @@ export default async function accountsRoutes(app: FastifyInstance) {
       const provider = new ProductionProvider();
       
       const cleanCode = (query.code || '').replace(/#_$/, '');
-      const { accessToken } = await provider.exchangeCodeForToken(cleanCode);
-      const profile = await provider.getAccountInfo(accessToken);
+      const { accessToken, userId } = await provider.exchangeCodeForToken(cleanCode);
+      const profile = await provider.getAccountInfo(accessToken, userId);
+
+      const finalUsername = (profile.username && profile.username.length <= 30 && !profile.username.startsWith('IGAA'))
+        ? profile.username
+        : (userId ? `ig_user_${userId}` : 'instagram_account');
 
       await accountsService.createOrUpdateOAuthAccount({
         workspaceId: stateData.workspaceId,
-        username: profile.username || 'instagram_user',
+        username: finalUsername,
         accessToken,
         addedById: stateData.userId
       });

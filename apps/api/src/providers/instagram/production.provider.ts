@@ -51,19 +51,19 @@ export class ProductionProvider implements InstagramProvider {
     };
   }
 
-  async getAccountInfo(accessTokenOrUsername: string): Promise<any> {
+  async getAccountInfo(accessTokenOrUsername: string, userId?: string): Promise<any> {
     try {
-      // Instagram Basic Display API endpoint
       const res = await fetch(
-        `https://graph.instagram.com/me?fields=id,username,account_type,media_count&access_token=${accessTokenOrUsername}`
+        `https://graph.instagram.com/me?fields=id,username&access_token=${accessTokenOrUsername}`
       );
       if (res.ok) {
-        return await res.json();
+        const data = await res.json() as any;
+        if (data.username) return data;
       }
-      return { username: accessTokenOrUsername, status: 'Active' };
-    } catch (err: any) {
-      return { username: accessTokenOrUsername, status: 'Active' };
-    }
+    } catch (err: any) {}
+
+    const fallback = userId ? `ig_user_${userId}` : 'instagram_account';
+    return { username: fallback, status: 'Active' };
   }
 
   async authenticate(accountId: string): Promise<void> {
