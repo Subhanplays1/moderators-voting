@@ -285,10 +285,13 @@ export function Accounts() {
             </Button>
             <Button 
               variant="outline"
-              onClick={() => { window.location.href = '/api/accounts/oauth/instagram/authorize'; }}
+              onClick={() => { 
+                const token = localStorage.getItem('token') || '';
+                window.location.href = `https://moderators-api.onrender.com/api/accounts/oauth/instagram/authorize?token=${encodeURIComponent(token)}`; 
+              }}
               className="flex-1 sm:flex-initial text-xs sm:text-sm gap-2 h-11 px-4 rounded-xl border-white/10 hover:bg-white/5 text-zinc-300"
             >
-              <ExternalLink size={15} /> OAuth Dialog
+              <ExternalLink size={15} /> Official Instagram Login
             </Button>
             <Button 
               variant="outline" 
