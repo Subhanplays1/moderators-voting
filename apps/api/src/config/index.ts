@@ -16,8 +16,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   FRONTEND_URL: z.string().default('https://dist-one-nu-24.vercel.app'),
   INSTAGRAM_PROVIDER: z.enum(['mock', 'production']).default('production'),
-  INSTAGRAM_APP_ID: z.string().default('1850579819691930'),
-  INSTAGRAM_APP_SECRET: z.string().default('cd14b1ba560eae2e8286f57eaf625e08'),
+  INSTAGRAM_APP_ID: z.string().default('3287637704761715'),
+  INSTAGRAM_APP_SECRET: z.string().default('a61a914e2a8686314a41c1d2380d8814'),
   INSTAGRAM_REDIRECT_URI: z.string().default('https://moderators-api.onrender.com/api/accounts/oauth/instagram/callback')
 });
 

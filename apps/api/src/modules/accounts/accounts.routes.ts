@@ -67,7 +67,8 @@ export default async function accountsRoutes(app: FastifyInstance) {
       const stateData = JSON.parse(Buffer.from(query.state || '', 'base64').toString('utf8'));
       const provider = new ProductionProvider();
       
-      const { accessToken } = await provider.exchangeCodeForToken(query.code);
+      const cleanCode = (query.code || '').replace(/#_$/, '');
+      const { accessToken } = await provider.exchangeCodeForToken(cleanCode);
       const profile = await provider.getAccountInfo(accessToken);
 
       await accountsService.createOrUpdateOAuthAccount({

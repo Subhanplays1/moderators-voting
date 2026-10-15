@@ -16,8 +16,8 @@ export class ProductionProvider implements InstagramProvider {
     if (!this.appId) {
       throw new Error('INSTAGRAM_APP_ID is not configured in environment variables');
     }
-    const scope = 'user_profile,user_media';
-    return `https://api.instagram.com/oauth/authorize?client_id=${this.appId}&redirect_uri=${encodeURIComponent(
+    const scope = 'instagram_business_basic';
+    return `https://www.instagram.com/oauth/authorize?client_id=${this.appId}&redirect_uri=${encodeURIComponent(
       this.redirectUri
     )}&scope=${scope}&response_type=code&state=${state}`;
   }
