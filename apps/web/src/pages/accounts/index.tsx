@@ -404,9 +404,20 @@ export function Accounts() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={statusVariant(account.status)}>
-                        {account.status}
-                      </Badge>
+                      <div className="flex flex-col gap-1 items-start">
+                        <Badge variant={statusVariant(account.status)}>
+                          {account.status}
+                        </Badge>
+                        {account.statusMessage?.includes('OAuth') ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 font-medium" title="Meta Official OAuth: Read-only profile access. Story voting not supported by Meta.">
+                            OAuth (No Story Vote)
+                          </span>
+                        ) : account.status === 'CONNECTED' ? (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium" title="Direct Session Active. Ready for automated story voting.">
+                            Story Voting Ready
+                          </span>
+                        ) : null}
+                      </div>
                     </TableCell>
                     <TableCell className="text-xs text-zinc-400">
                       {account.lastCheckedAt ? formatDate(account.lastCheckedAt) : 'Never'}

@@ -90,7 +90,7 @@ function submitInstagramStoryVote(params: {
 }
 
 export async function createSession(workspaceId: string, data: { pollId: string; optionId?: string; selectedOption?: string; name?: string; targetVotes?: number; createdBy: string }) {
-  const accounts = await db.instagramAccount.findMany({ 
+  const candidateAccounts = await db.instagramAccount.findMany({ 
     where: { 
       workspaceId,
       status: 'CONNECTED',
@@ -98,10 +98,22 @@ export async function createSession(workspaceId: string, data: { pollId: string;
     } 
   });
   
+  // Filter accounts that possess a real Instagram mobile/web session cookie.
+  // Meta official OAuth tokens (IGAA...) cannot vote on Instagram Story polls.
+  const accounts = candidateAccounts.filter(acc => {
+    try {
+      if (!acc.encryptedToken) return false;
+      const dec = decrypt(acc.encryptedToken);
+      return dec.startsWith('Bearer IGT:2:') || dec.includes('sessionid=');
+    } catch {
+      return false;
+    }
+  });
+
   const chosenOption = data.selectedOption || data.optionId || 'Option A';
 
   if (accounts.length === 0) {
-    throw new Error('No connected Instagram accounts available. Please connect an account with a valid session in Accounts first.');
+    throw new Error('No Instagram accounts with active voting sessions found. Official OAuth accounts cannot vote on stories; please add accounts via Direct Login or Session ID.');
   }
 
   const session = await db.votingSession.create({
@@ -275,7 +287,13 @@ async function processSessionAsync(workspaceId: string, sessionId: string) {
             }
           }
         } else {
-          voteError = 'Missing session cookie or poll details';
+          if (!sessionCookie && (decrypted.startsWith('IGAA') || decrypted.startsWith('EAA'))) {
+            voteError = 'Official Meta OAuth tokens cannot vote on Instagram Stories. Please connect this account via Direct Login or Session ID.';
+          } else if (!sessionCookie) {
+            voteError = 'Missing Instagram session cookie. Please re-login this account via Direct Login.';
+          } else {
+            voteError = 'Missing story media ID or poll sticker details';
+          }
           voteSuccess = false;
         }
       } catch (err: any) {
