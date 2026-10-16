@@ -756,17 +756,44 @@ export function Accounts() {
 
           {loginStep === '2FA' && (
             <form onSubmit={handleVerify2FA} className="space-y-4 py-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="twofa-code" className="text-xs text-zinc-300">Security / 2FA Code</Label>
+              <div className="space-y-2">
+                <Label htmlFor="twofa-code" className="text-xs font-semibold text-zinc-200">
+                  Enter 6-Digit Verification Code
+                </Label>
+                <p className="text-[11px] text-zinc-400">
+                  Instagram ne security code aapke Email ya Phone (SMS) par dispatch kiya hai. Code check karke yahan darj karein:
+                </p>
                 <Input
                   id="twofa-code"
-                  placeholder="Enter 6-digit code"
+                  placeholder="123456"
+                  maxLength={8}
                   value={twoFactorCode}
                   onChange={(e) => setTwoFactorCode(e.target.value)}
                   required
                   autoFocus
-                  className="h-10 bg-zinc-900 border-white/10 text-white text-center font-mono text-lg tracking-widest placeholder:text-zinc-500"
+                  className="h-12 bg-zinc-900 border-pink-500/30 focus:border-pink-500 text-white text-center font-mono text-xl tracking-widest placeholder:text-zinc-600 rounded-xl"
                 />
+              </div>
+
+              <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-purple-200">💡 Code nahi mil raha ya Instagram verification fail ho rahi hai?</p>
+                  <p className="text-[11px] text-zinc-400 mt-0.5">
+                    Aap direct Instagram session cookie paste karke baghair kisi code ke 100% login ho sakte hain.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginMethod('SESSION');
+                    setLoginStep('LOGIN');
+                    setLoginError('');
+                    setLoginNotice('');
+                  }}
+                  className="shrink-0 px-2.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-semibold transition-colors"
+                >
+                  Use Cookie
+                </button>
               </div>
 
               <DialogFooter className="pt-2">
@@ -775,10 +802,10 @@ export function Accounts() {
                 </Button>
                 <Button 
                   type="submit" 
-                  disabled={loginLoading || !twoFactorCode}
-                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold"
+                  disabled={loginLoading || !twoFactorCode.trim()}
+                  className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-semibold rounded-xl"
                 >
-                  {loginLoading ? 'Verifying...' : 'Verify Code'}
+                  {loginLoading ? 'Verifying Code...' : 'Submit Code & Login'}
                 </Button>
               </DialogFooter>
             </form>

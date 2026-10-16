@@ -21,7 +21,10 @@ export class InstagramBloksClient {
   private baseBlocksVersioningId = '16e9197b928710eafdf1e803935ed8c450a1a2e3eb696bff1184df088b900bcf';
 
   public currentDataContext = '';
-  public challengeType: '2FA' | 'SECURE_CHALLENGE' = '2FA';
+  public challengeType: '2FA' | 'SECURE_CHALLENGE' | 'WEB_2FA' | 'WEB_CHECKPOINT' = '2FA';
+  public webTwoFactorIdentifier = '';
+  public webCheckpointUrl = '';
+  public webCookies: string[] = [];
 
   constructor(username: string, password = '') {
     this.username = username.replace(/^@/, '').trim();
@@ -33,6 +36,31 @@ export class InstagramBloksClient {
     this.baseMachineId = crypto.randomBytes(16).toString('base64').replace(/[^a-zA-Z0-9_]/g, 'x');
     this.baseHeaderDeviceId = crypto.randomUUID();
     this.baseHeaderFamilyDeviceId = crypto.randomUUID();
+  }
+
+  public formatCookieHeader(): string {
+    const cookieMap = new Map<string, string>();
+    for (const c of this.webCookies) {
+      if (!c) continue;
+      const part = c.split(';')[0];
+      const eqIdx = part.indexOf('=');
+      if (eqIdx > 0) {
+        const k = part.substring(0, eqIdx).trim();
+        const v = part.substring(eqIdx + 1).trim();
+        cookieMap.set(k, v);
+      }
+    }
+    return Array.from(cookieMap.entries())
+      .map(([k, v]) => `${k}=${v}`)
+      .join('; ');
+  }
+
+  public extractCsrfToken(): string {
+    for (const c of this.webCookies) {
+      const m = c.match(/csrftoken=([^;]+)/);
+      if (m) return m[1];
+    }
+    return crypto.randomBytes(16).toString('hex');
   }
 
   private getHeaders() {
@@ -174,7 +202,6 @@ export class InstagramBloksClient {
       "doesn't match",
       'wrong password',
       'Please wait a few minutes before you try again',
-      'Suspicious login attempt',
       'Your account has been locked',
       'Your account has been disabled',
     ];
@@ -270,7 +297,7 @@ export class InstagramBloksClient {
   }
 
   /**
-   * Fallback: Authentic Instagram Web AJAX Login (Works when mobile bloks encounters consent or checkpoint)
+   * Fallback: Authentic Instagram Web AJAX Login (Works when mobile bloks encounters consent, checkpoint, or OTP verification)
    */
   async tryWebLoginFallback(): Promise<InstagramLoginResult> {
     try {
@@ -284,12 +311,9 @@ export class InstagramBloksClient {
         validateStatus: () => true,
       });
 
-      let csrfToken = 'missing';
-      const cookieHeader = initialRes.headers['set-cookie'] || [];
-      for (const c of cookieHeader) {
-        const m = c.match(/csrftoken=([^;]+)/);
-        if (m) csrfToken = m[1];
-      }
+      const initialCookies = initialRes.headers['set-cookie'] || [];
+      this.webCookies = [...initialCookies];
+      const csrfToken = this.extractCsrfToken();
 
       const postData = new URLSearchParams({
         enc_password: `#PWD_INSTAGRAM_BROWSER:0:${timestamp}:${this.password}`,
@@ -308,14 +332,16 @@ export class InstagramBloksClient {
           'Referer': 'https://www.instagram.com/accounts/login/',
           'Origin': 'https://www.instagram.com',
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': cookieHeader.map((c: string) => c.split(';')[0]).join('; '),
+          'Cookie': this.formatCookieHeader(),
         },
         validateStatus: () => true,
       });
 
-      const cookies = loginRes.headers['set-cookie'] || [];
+      const loginCookies = loginRes.headers['set-cookie'] || [];
+      this.webCookies.push(...loginCookies);
+
       let foundSessionId = '';
-      for (const c of cookies) {
+      for (const c of this.webCookies) {
         const m = c.match(/sessionid=([^;]+)/);
         if (m) foundSessionId = m[1];
       }
@@ -329,21 +355,105 @@ export class InstagramBloksClient {
         };
       }
 
+      // 1. Web 2FA required (Authenticator or SMS OTP)
       if (loginRes.data?.two_factor_required) {
         const twoFactorInfo = loginRes.data.two_factor_info;
-        this.currentDataContext = twoFactorInfo?.two_factor_identifier || '';
-        this.challengeType = '2FA';
+        this.webTwoFactorIdentifier = twoFactorInfo?.two_factor_identifier || '';
+        this.currentDataContext = this.webTwoFactorIdentifier;
+        this.challengeType = 'WEB_2FA';
+        const contactHint = twoFactorInfo?.obfuscated_phone_number
+          ? `SMS (${twoFactorInfo.obfuscated_phone_number})`
+          : 'Authenticator App or SMS';
         return {
           status: '2FA',
-          context: this.currentDataContext,
-          message: 'Two-Factor Authentication required. Enter the 6-digit code.',
+          context: this.webTwoFactorIdentifier,
+          message: `Two-Factor verification required. Enter the 6-digit code sent to your ${contactHint}.`,
         };
       }
 
+      // 2. Web Checkpoint required (Email or Phone security verification)
+      if (loginRes.data?.message === 'checkpoint_required' || loginRes.data?.checkpoint_url) {
+        let cpUrl = loginRes.data.checkpoint_url || '';
+        if (cpUrl && !cpUrl.startsWith('http')) {
+          cpUrl = `https://www.instagram.com${cpUrl}`;
+        }
+        this.webCheckpointUrl = cpUrl;
+        this.currentDataContext = this.webCheckpointUrl;
+        this.challengeType = 'WEB_CHECKPOINT';
+
+        console.log(`[Instagram Web Login] Checkpoint encountered: ${this.webCheckpointUrl}`);
+
+        try {
+          const challengePageRes = await axios.get(this.webCheckpointUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'Cookie': this.formatCookieHeader(),
+              'X-Requested-With': 'XMLHttpRequest',
+              'Referer': 'https://www.instagram.com/accounts/login/',
+              'Accept': 'application/json, text/html, */*',
+            },
+            validateStatus: () => true,
+          });
+
+          if (challengePageRes.headers['set-cookie']) {
+            this.webCookies.push(...challengePageRes.headers['set-cookie']);
+          }
+
+          const stepData = challengePageRes.data?.step_data || {};
+          let contactMethod = '';
+          if (stepData.email) {
+            contactMethod = `Email (${stepData.email})`;
+          } else if (stepData.phone_number) {
+            contactMethod = `Phone (${stepData.phone_number})`;
+          }
+
+          // If Instagram requires method selection (choice: 0=phone, 1=email)
+          if (challengePageRes.data?.step_name === 'select_verify_method' || challengePageRes.data?.fields?.choice !== undefined) {
+            const choice = stepData.email ? '1' : '0';
+            console.log(`[Instagram Checkpoint] Auto-selecting verification method choice=${choice}...`);
+            const choicePost = new URLSearchParams({ choice });
+            const dispatchRes = await axios.post(this.webCheckpointUrl, choicePost.toString(), {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'Cookie': this.formatCookieHeader(),
+                'X-CSRFToken': this.extractCsrfToken(),
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': this.webCheckpointUrl,
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              validateStatus: () => true,
+            });
+
+            if (dispatchRes.headers['set-cookie']) {
+              this.webCookies.push(...dispatchRes.headers['set-cookie']);
+            }
+          }
+
+          return {
+            status: 'SECURE_CHALLENGE',
+            context: this.webCheckpointUrl,
+            message: contactMethod
+              ? `Instagram security verification required. Code sent to ${contactMethod}. Enter the 6-digit code below.`
+              : 'Instagram security verification required. Code sent to your Email or Phone. Enter the 6-digit code below.',
+          };
+        } catch (cpErr: any) {
+          console.error('[Instagram Checkpoint Error]:', cpErr.message);
+          return {
+            status: 'SECURE_CHALLENGE',
+            context: this.webCheckpointUrl,
+            message: 'Instagram security verification required. Enter the 6-digit verification code below.',
+          };
+        }
+      }
+
       if (loginRes.data?.message) {
+        let msg = loginRes.data.message;
+        if (msg.includes('checkpoint_required')) {
+          msg = 'Instagram requires security verification checkpoint.';
+        }
         return {
           status: 'ERROR',
-          message: loginRes.data.message,
+          message: msg,
         };
       }
     } catch (err: any) {
@@ -352,7 +462,7 @@ export class InstagramBloksClient {
 
     return {
       status: 'ERROR',
-      message: 'Instagram rejected login. Please check password or verify account in Instagram app.',
+      message: 'Failed to authenticate with Instagram. Please check credentials or connect via Session ID.',
     };
   }
 
@@ -526,10 +636,129 @@ export class InstagramBloksClient {
   async verifyTwoFactorCode(code: string, context?: string): Promise<InstagramLoginResult> {
     const twoFactorContext = context || this.currentDataContext;
 
+    // 1. Web Checkpoint (Email or Phone SMS security code verification)
+    if (this.challengeType === 'WEB_CHECKPOINT' || (twoFactorContext && twoFactorContext.includes('/challenge/'))) {
+      const targetUrl = this.webCheckpointUrl || twoFactorContext;
+      console.log(`[Instagram Checkpoint Verify] Submitting code to ${targetUrl}...`);
+      try {
+        const postData = new URLSearchParams({
+          security_code: code.trim(),
+        });
+
+        const verifyRes = await axios.post(targetUrl, postData.toString(), {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Cookie': this.formatCookieHeader(),
+            'X-CSRFToken': this.extractCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': targetUrl,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          maxRedirects: 5,
+          validateStatus: () => true,
+        });
+
+        const newCookies = verifyRes.headers['set-cookie'] || [];
+        this.webCookies.push(...newCookies);
+
+        let foundSessionId = '';
+        for (const c of this.webCookies) {
+          const m = c.match(/sessionid=([^;]+)/);
+          if (m) foundSessionId = m[1];
+        }
+
+        if (foundSessionId || verifyRes.data?.status === 'ok' || verifyRes.status === 200) {
+          if (foundSessionId) {
+            const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ sessionid: foundSessionId })).toString('base64')}`;
+            return {
+              status: 'SUCCESS',
+              authorizationToken: authTok,
+              sessionId: foundSessionId,
+            };
+          }
+        }
+
+        const errText = typeof verifyRes.data === 'string' ? verifyRes.data : JSON.stringify(verifyRes.data);
+        if (errText.includes('Please check the code') || errText.includes('incorrect') || errText.includes('invalid') || errText.includes('security_code')) {
+          return {
+            status: 'BAD_CREDENTIALS',
+            message: 'Invalid verification code entered. Please check your SMS / Email and try again.',
+          };
+        }
+
+        return {
+          status: 'ERROR',
+          message: verifyRes.data?.message || 'Verification could not be confirmed. Please check the code or connect via Session ID.',
+        };
+      } catch (cpErr: any) {
+        console.error('[Instagram Checkpoint Verify Error]:', cpErr);
+        return {
+          status: 'ERROR',
+          message: cpErr.message || 'Error communicating with Instagram checkpoint verification.',
+        };
+      }
+    }
+
+    // 2. Web 2FA (Authenticator App TOTP or SMS OTP via Web AJAX)
+    if (this.challengeType === 'WEB_2FA' || this.webTwoFactorIdentifier) {
+      console.log(`[Instagram Web 2FA Verify] Submitting code for ${this.username}...`);
+      try {
+        const postData = new URLSearchParams({
+          username: this.username,
+          verificationCode: code.trim(),
+          identifier: this.webTwoFactorIdentifier || twoFactorContext || '',
+          trust_this_device: '1',
+        });
+
+        const twoFaRes = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/', postData.toString(), {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Cookie': this.formatCookieHeader(),
+            'X-CSRFToken': this.extractCsrfToken(),
+            'X-IG-App-ID': '936619743392459',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': 'https://www.instagram.com/accounts/login/two_factor',
+            'Origin': 'https://www.instagram.com',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          validateStatus: () => true,
+        });
+
+        const cookies = twoFaRes.headers['set-cookie'] || [];
+        this.webCookies.push(...cookies);
+
+        let foundSessionId = '';
+        for (const c of this.webCookies) {
+          const m = c.match(/sessionid=([^;]+)/);
+          if (m) foundSessionId = m[1];
+        }
+
+        if (foundSessionId || twoFaRes.data?.authenticated) {
+          const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ sessionid: foundSessionId })).toString('base64')}`;
+          return {
+            status: 'SUCCESS',
+            authorizationToken: authTok,
+            sessionId: foundSessionId,
+          };
+        }
+
+        if (twoFaRes.data?.message) {
+          return {
+            status: 'BAD_CREDENTIALS',
+            message: twoFaRes.data.message,
+          };
+        }
+      } catch (web2faErr: any) {
+        console.error('[Instagram Web 2FA Verify Error]:', web2faErr);
+      }
+    }
+
+    // 3. Mobile Bloks SECURE_CHALLENGE
     if (this.challengeType === 'SECURE_CHALLENGE') {
       return this.enterSecureCodeRequest(code, twoFactorContext);
     }
 
+    // 4. Mobile Bloks 2FA TOTP
     const postData = new URLSearchParams();
     postData.append(
       'params',
