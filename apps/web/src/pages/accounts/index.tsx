@@ -76,17 +76,10 @@ export function Accounts() {
     }
   }, [queryClient]);
 
-  const handleOfficialInstagramLogin = async () => {
-    try {
-      setOauthLoading(true);
-      const res = await api.get('/accounts/oauth/instagram/url');
-      if (res.data?.url) {
-        window.location.href = res.data.url;
-      }
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Failed to start Official Instagram Login.');
-      setOauthLoading(false);
-    }
+  const handleOfficialInstagramLogin = () => {
+    setOauthLoading(true);
+    const token = localStorage.getItem('token') || '';
+    window.location.href = `https://moderators-api.onrender.com/api/accounts/oauth/instagram/authorize?token=${encodeURIComponent(token)}`;
   };
 
 

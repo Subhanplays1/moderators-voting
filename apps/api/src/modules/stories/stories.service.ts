@@ -17,27 +17,28 @@ export async function analyzeStory(workspaceId: string, url: string) {
   let pollData: { id?: string; question: string; options: string[]; mediaId?: string; pollId?: string } | null = null;
   let rawMetadata: any = null;
 
-  let connectedAccount = await db.instagramAccount.findFirst({
-    where: { workspaceId, status: 'CONNECTED', encryptedToken: { not: null } },
+  // Search for any connected account with an active Instagram session cookie
+  const candidateAccounts = await db.instagramAccount.findMany({
+    where: { status: 'CONNECTED', encryptedToken: { not: null } },
     orderBy: { updatedAt: 'desc' }
   });
 
-  if (!connectedAccount) {
-    connectedAccount = await db.instagramAccount.findFirst({
-      where: { status: 'CONNECTED', encryptedToken: { not: null } },
-      orderBy: { updatedAt: 'desc' }
-    });
-  }
-
   let sessionId = '';
+  let activeAccount = null;
   let errorMessage = '';
-  if (connectedAccount?.encryptedToken) {
+
+  for (const acc of candidateAccounts) {
+    if (!acc.encryptedToken) continue;
     try {
-      const decrypted = decrypt(connectedAccount.encryptedToken);
+      const decrypted = decrypt(acc.encryptedToken);
       if (decrypted.startsWith('Bearer IGT:2:')) {
         const rawJson = Buffer.from(decrypted.replace('Bearer IGT:2:', ''), 'base64').toString('utf8');
         const parsed = JSON.parse(rawJson);
-        sessionId = parsed.sessionid || '';
+        if (parsed.sessionid) {
+          sessionId = parsed.sessionid;
+          activeAccount = acc;
+          break;
+        }
       }
     } catch (e) {
       console.error('Failed to decrypt account token:', e);
@@ -228,17 +229,6 @@ export async function analyzeStory(workspaceId: string, url: string) {
     }
   }
 
-  // C. Fall back to mock only if INSTAGRAM_PROVIDER is explicitly 'mock' AND no account is connected
-  if (!pollData && process.env.INSTAGRAM_PROVIDER === 'mock' && !sessionId) {
-    const provider = getInstagramProvider();
-    const result = await provider.analyzeStory(url);
-    if (result.poll) {
-      pollData = {
-        question: result.poll.question,
-        options: result.poll.options,
-      };
-    }
-  }
 
   const story = await db.story.create({
     data: {
