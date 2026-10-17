@@ -68,9 +68,11 @@ export function Accounts() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('oauth_success')) {
-      alert('Official Instagram Account connected successfully!');
       window.history.replaceState({}, '', window.location.pathname);
       queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      setIsDirectLoginOpen(true);
+      setLoginMethod('SESSION');
+      setLoginNotice('Official Account connected successfully! Now link your session cookie to activate automated story voting for this account.');
     } else if (params.get('oauth_error')) {
       alert(`Instagram Connection Error: ${params.get('oauth_error')}`);
       window.history.replaceState({}, '', window.location.pathname);
@@ -429,6 +431,21 @@ export function Accounts() {
                       {formatDate(account.createdAt)}
                     </TableCell>
                     <TableCell className="text-right space-x-1">
+                      {account.statusMessage?.includes('OAuth') && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setSessionUsername(account.username);
+                            setIsDirectLoginOpen(true);
+                            setLoginMethod('SESSION');
+                            setLoginNotice(`Enable automated Story Voting for @${account.username} by linking its session cookie.`);
+                          }}
+                          className="text-xs h-8 px-2.5 bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-semibold rounded-lg shadow-sm"
+                          title="Activate story voting capability for this Official Account"
+                        >
+                          <KeyRound size={12} className="mr-1" /> Enable Story Voting
+                        </Button>
+                      )}
                       {account.status !== 'CONNECTED' ? (
                         <Button
                           size="sm"
@@ -667,6 +684,26 @@ export function Accounts() {
                       <li>Press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-white/10 text-[10px]">F12</kbd> (Inspect) &rarr; Go to <strong>Application</strong> (or Storage) &rarr; <strong>Cookies</strong> &rarr; <strong>instagram.com</strong>.</li>
                       <li>Find and copy the value of the cookie named <code className="text-pink-300 font-mono font-bold">sessionid</code>.</li>
                     </ol>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-zinc-900 border border-white/10 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-zinc-200">✨ 1-Click Cookie Grabber (No F12 Needed):</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const code = "javascript:(function(){const s=document.cookie.match(/(?:^|;\\s*)sessionid=([^;]+)/);if(s){navigator.clipboard.writeText(s[1]);alert('Session ID copied to clipboard! Ab yahan paste kar dein.');}else{alert('Instagram.com par pehle login karein!');}})();";
+                          navigator.clipboard.writeText(code);
+                          alert('Bookmarklet code copied! Apne browser bookmark ke URL me paste kar dein.');
+                        }}
+                        className="text-[11px] px-2.5 py-1 rounded-lg bg-pink-500/20 text-pink-300 border border-pink-500/30 hover:bg-pink-500/30 transition-colors font-medium"
+                      >
+                        Copy 1-Click Bookmarklet
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-zinc-400">
+                      Browser bookmarks bar par is bookmarklet ko click karein jab aap instagram.com par hon &rarr; sessionid auto copy ho jayega!
+                    </p>
                   </div>
 
                   <div className="space-y-1.5">
