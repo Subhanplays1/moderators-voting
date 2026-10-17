@@ -279,7 +279,8 @@ export async function verifyInstagramTwoFactor(params: {
 
   return {
     status: result.status,
-    message: result.message || 'Two-factor code verification failed'
+    message: result.message || 'Two-factor code verification failed',
+    context: result.context || client.serializeState()
   };
 }
 

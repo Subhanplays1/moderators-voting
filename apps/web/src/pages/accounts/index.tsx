@@ -208,7 +208,10 @@ export function Accounts() {
         setLoginError('');
         queryClient.invalidateQueries({ queryKey: ['accounts'] });
       } else {
-        setLoginError(res.data.message || 'Invalid verification code.');
+        if (res.data?.context) {
+          setTwoFactorContext(res.data.context);
+        }
+        setLoginError(res.data?.message || 'Invalid verification code.');
       }
     } catch (err: any) {
       setLoginError(err.response?.data?.message || '2FA Verification error.');
