@@ -164,223 +164,48 @@ export class InstagramBloksClient {
   }
 
   async sendLoginRequest(): Promise<InstagramLoginResult> {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const waterfallId = crypto.randomUUID();
+    console.log(`[Instagram Login] Attempting authentic Web AJAX direct login for @${this.username}...`);
 
-    const postData = new URLSearchParams();
-    postData.append(
-      'params',
-      JSON.stringify({
-        client_input_params: {
-          should_show_nested_nta_from_aymh: 0,
-          device_id: this.baseDeviceId,
-          sim_phones: [],
-          login_attempt_count: 1,
-          secure_family_device_id: '',
-          machine_id: this.baseMachineId,
-          accounts_list: [{ credential_type: 'google_oauth', account_type: 'google_oauth', token: '' }],
-          auth_secure_device_id: '',
-          has_whatsapp_installed: 0,
-          password: `#PWD_INSTAGRAM:0:${timestamp}:${encodeURIComponent(this.password)}`,
-          sso_token_map_json_string: '',
-          family_device_id: this.baseHeaderFamilyDeviceId,
-          fb_ig_device_id: [],
-          device_emails: [],
-          try_num: 1,
-          lois_settings: { lois_token: '', lara_override: '' },
-          event_flow: 'login_manual',
-          event_step: 'home_page',
-          headers_infra_flow_id: '',
-          openid_tokens: { '': '' },
-          client_known_key_hash: '',
-          contact_point: this.username,
-          encrypted_msisdn: '',
-        },
-        server_params: {
-          should_trigger_override_login_2fa_action: 0,
-          is_from_logged_out: 0,
-          should_trigger_override_login_success_action: 0,
-          login_credential_type: 'none',
-          server_login_source: 'login',
-          waterfall_id: waterfallId,
-          login_source: 'Login',
-          is_platform_login: 0,
-          INTERNAL__latency_qpl_marker_id: 36707139,
-          offline_experiment_group: 'caa_iteration_v3_perf_ig_4',
-          is_from_landing_page: 0,
-          password_text_input_id: 'e5bwah:133',
-          is_from_empty_password: 0,
-          ar_event_source: 'login_home_page',
-          qe_device_id: this.baseHeaderDeviceId,
-          username_text_input_id: 'e5bwah:132',
-          layered_homepage_experiment_group: null,
-          device_id: this.baseDeviceId,
-          INTERNAL__latency_qpl_instance_id: 8.5547960900377e13,
-          reg_flow_source: 'login_home_native_integration_point',
-          is_caa_perf_enabled: 1,
-          credential_type: 'password',
-          is_from_password_entry_page: 0,
-        },
-      })
-    );
-    postData.append('bloks_versioning_id', this.baseBlocksVersioningId);
-
-    const res = await axios.post(
-      `${this.baseUrl}com.bloks.www.bloks.caa.login.async.send_login_request/`,
-      postData.toString(),
-      {
-        headers: this.getHeaders(),
-        maxRedirects: 0,
-        validateStatus: () => true,
-      }
-    );
-
-    if (res.headers['ig-set-x-mid']) {
-      this.currentHeaderMid = res.headers['ig-set-x-mid'] as string;
-    }
-
-    const body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
-    try {
-      const fs = await import('fs');
-      fs.writeFileSync('d:/Documents/antigravity/voting/last_insta_response.txt', body);
-    } catch {}
-    console.log(`[Instagram Login] Response status: ${res.status}, length: ${body.length}, snippet: ${body.slice(0, 400)}`);
-
-    // 1. Success check: Authorization token present
-    if (body.includes('IG-Set-Authorization') || body.includes('logged_in_user')) {
-      const { authToken, sessionId } = this.extractAuth(body);
-      return {
-        status: 'SUCCESS',
-        authorizationToken: authToken,
-        sessionId,
-      };
-    }
-
-    // 2. Navigation Challenge (xr0ni take_challenge flow)
-    if (body.includes('challenge_context') && (body.includes('override_login_2fa_action') || body.includes('navigation.take_challenge') || body.includes('/challenge/'))) {
-      const urlPattern = /\\"url\\":\\"(.*?)\\",\\"api_path/;
-      const contextPattern = /\\"challenge_context\\":\\"(.*?)\\"\}\}\\",\s*\(bk\.action\./;
-      const urlMatch = body.match(urlPattern);
-      const contextMatch = body.match(contextPattern) || body.match(/"challenge_context":"([^"]+)"/);
-
-      if (contextMatch) {
-        this.currentDataContext = contextMatch[1];
-        if (urlMatch) {
-          this.currentChallengeUrl = urlMatch[1].replace(/\\/g, '');
-        }
-        this.challengeType = 'NAV_CHALLENGE';
-
-        console.log('[Instagram Login] Navigation Challenge detected. Initializing take_challenge...');
-        const challengeInit = await this.initiateNavigationChallenge();
-        if (challengeInit.success) {
-          return {
-            status: 'SECURE_CHALLENGE',
-            context: this.serializeState(),
-            message: challengeInit.contactPoint
-              ? `Security verification required. Code dispatched by Instagram to ${challengeInit.contactPoint}.`
-              : 'Security verification required. Instagram sent a verification code to your email or phone.',
-          };
-        }
-      }
-    }
-
-    // 3. Two-Factor Authentication (Authenticator app TOTP or SMS in Bloks)
-    if (body.includes('redirection_to_two_fac') || body.includes('override_login_2fa_action') || body.includes('two_factor_login')) {
-      const match =
-        body.match(/\\"INTERNAL_INFRA_screen_id\\"\).*?Make,\s*\\"(.*?)\\",\s*\\"two_factor_login\\"/) ||
-        body.match(/\\"INTERNAL_INFRA_THEME\\"\).*?Make,\s*\\"(.*?)\\",\s*\\"two_factor_login\\"/) ||
-        body.match(/\\"INTERNAL_INFRA_THEME\\".*?Make,\s*\\"(.*?)\\",\s*\\"harm_f/);
-      if (match) {
-        this.currentDataContext = match[1];
-        this.challengeType = '2FA';
-        return {
-          status: '2FA',
-          context: this.serializeState(),
-          message: 'Two-Factor Authentication required. Enter the 6-digit code from your Authenticator app.',
-        };
-      }
-    }
-
-    // 4. Secure Challenge (SMS/Email security code checkpoint in Bloks)
-    if (body.includes('two_step_verification')) {
-      const match = body.match(/\\"device_id\\".*?Make,\s*\\"(.*?)\\",\s*\\"/);
-      if (match) {
-        this.currentDataContext = match[1];
-        this.challengeType = 'SECURE_CHALLENGE';
-
-        console.log('[Instagram Login] Checkpoint detected. Requesting security code dispatch from Instagram...');
-        const secureRes = await this.sendSecureCodeRequest();
-        if (secureRes.success) {
-          return {
-            status: 'SECURE_CHALLENGE',
-            context: this.serializeState(),
-            message: secureRes.contactPoint
-              ? `Security code sent by Instagram to ${secureRes.contactPoint}.`
-              : 'Security code dispatched to your phone or email.',
-          };
-        }
-      }
-    }
-
-    // 5. Explicit incorrect password dialog check (MUST NOT match background telemetry like "login_failure")
-    const explicitBadCredentials = [
-      'The password you entered is incorrect',
-      'Incorrect password',
-      'wrong password',
-      "The username you entered doesn't appear to belong to an account",
-      'Your account has been locked',
-      'Your account has been disabled',
-    ];
-
-    for (const kw of explicitBadCredentials) {
-      if (body.includes(kw)) {
-        let msg = 'Invalid Instagram username or password.';
-        if (kw.includes('locked') || kw.includes('disabled')) {
-          msg = 'Your Instagram account has been locked or disabled by Instagram.';
-        }
-        return {
-          status: 'BAD_CREDENTIALS',
-          message: msg,
-        };
-      }
-    }
-
-    // Fallback 2: Try official Web Login API if mobile Bloks did not yield a session
-    console.log('[Instagram Login] Bloks flow did not yield token, attempting Web AJAX fallback...');
+    // 1. Primary: Official Instagram Web AJAX Login (Supports 2FA TOTP/SMS, Checkpoint, and clean credentials verification)
     const webResult = await this.tryWebLoginFallback();
-    if (webResult.status === 'SUCCESS' || webResult.status === '2FA' || webResult.status === 'SECURE_CHALLENGE') {
-      if (webResult.context) {
-        webResult.context = this.serializeState();
-      }
+    if (
+      webResult.status === 'SUCCESS' ||
+      webResult.status === '2FA' ||
+      webResult.status === 'SECURE_CHALLENGE' ||
+      webResult.status === 'BAD_CREDENTIALS'
+    ) {
       return webResult;
     }
 
-    // Fallback 3: Masslooker-style Direct Android Signed Login (accounts/login/ with HMAC-SHA256 signature)
-    console.log('[Instagram Login] Web fallback did not succeed, attempting Masslooker direct Android signed login...');
-    const legacyResult = await this.tryLegacySignedLoginFallback();
-    if (legacyResult.status === 'SUCCESS' || legacyResult.status === '2FA' || legacyResult.status === 'SECURE_CHALLENGE') {
-      if (legacyResult.context) {
-        legacyResult.context = this.serializeState();
-      }
-      return legacyResult;
+    // 2. Secondary Fallback: Mobile Bloks Login (Attempted if Web AJAX experienced a network error)
+    console.log(`[Instagram Login] Web login returned ${webResult.status}: ${webResult.message}. Attempting Mobile Bloks fallback...`);
+    const bloksResult = await this.sendMobileBloksLogin();
+    if (
+      bloksResult.status === 'SUCCESS' ||
+      bloksResult.status === '2FA' ||
+      bloksResult.status === 'SECURE_CHALLENGE' ||
+      bloksResult.status === 'BAD_CREDENTIALS'
+    ) {
+      return bloksResult;
     }
 
     return {
-      status: 'ERROR',
-      message: legacyResult.message || webResult.message || 'Failed to authenticate with Instagram. Response error from API.',
+      status: webResult.status || 'BAD_CREDENTIALS',
+      message: webResult.message || bloksResult.message || 'Instagram authentication failed. Please check your username and password.',
     };
   }
 
   /**
-   * Fallback: Authentic Instagram Web AJAX Login (Works when mobile bloks encounters consent, checkpoint, or OTP verification)
+   * Primary: Authentic Instagram Web AJAX Login (Official browser endpoint)
    */
   async tryWebLoginFallback(): Promise<InstagramLoginResult> {
     try {
       const timestamp = Math.floor(Date.now() / 1000);
       const initialRes = await axios.get('https://www.instagram.com/accounts/login/', {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
         },
         maxRedirects: 5,
         validateStatus: () => true,
@@ -388,7 +213,15 @@ export class InstagramBloksClient {
 
       const initialCookies = initialRes.headers['set-cookie'] || [];
       this.webCookies = [...initialCookies];
-      const csrfToken = this.extractCsrfToken();
+      let csrfToken = this.extractCsrfToken();
+
+      if (!csrfToken && typeof initialRes.data === 'string') {
+        const match = initialRes.data.match(/"csrf_token":"([^"]+)"/);
+        if (match) {
+          csrfToken = match[1];
+          this.webCookies.push(`csrftoken=${csrfToken}; Domain=.instagram.com; Path=/`);
+        }
+      }
 
       const postData = new URLSearchParams({
         enc_password: `#PWD_INSTAGRAM_BROWSER:0:${timestamp}:${this.password}`,
@@ -400,9 +233,11 @@ export class InstagramBloksClient {
 
       const loginRes = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/', postData.toString(), {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
           'X-CSRFToken': csrfToken,
           'X-IG-App-ID': '936619743392459',
+          'X-ASBD-ID': '129477',
+          'X-IG-WWW-Claim': '0',
           'X-Requested-With': 'XMLHttpRequest',
           'Referer': 'https://www.instagram.com/accounts/login/',
           'Origin': 'https://www.instagram.com',
@@ -421,8 +256,12 @@ export class InstagramBloksClient {
         if (m) foundSessionId = m[1];
       }
 
+      // 1. Success check: session ID found or authenticated
       if (foundSessionId || loginRes.data?.authenticated) {
-        const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ sessionid: foundSessionId })).toString('base64')}`;
+        const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ 
+          sessionid: foundSessionId,
+          userId: loginRes.data?.userId 
+        })).toString('base64')}`;
         return {
           status: 'SUCCESS',
           authorizationToken: authTok,
@@ -430,7 +269,7 @@ export class InstagramBloksClient {
         };
       }
 
-      // 1. Web 2FA required (Authenticator or SMS OTP)
+      // 2. 2FA Verification Required (Authenticator App or SMS)
       if (loginRes.data?.two_factor_required) {
         const twoFactorInfo = loginRes.data.two_factor_info;
         this.webTwoFactorIdentifier = twoFactorInfo?.two_factor_identifier || '';
@@ -438,15 +277,15 @@ export class InstagramBloksClient {
         this.challengeType = 'WEB_2FA';
         const contactHint = twoFactorInfo?.obfuscated_phone_number
           ? `SMS (${twoFactorInfo.obfuscated_phone_number})`
-          : 'Authenticator App or SMS';
+          : (twoFactorInfo?.totp_two_factor_on ? 'Authenticator App' : 'Authenticator App or SMS');
         return {
           status: '2FA',
-          context: this.webTwoFactorIdentifier,
+          context: this.serializeState(),
           message: `Two-Factor verification required. Enter the 6-digit code sent to your ${contactHint}.`,
         };
       }
 
-      // 2. Web Checkpoint required (Email or Phone security verification)
+      // 3. Web Checkpoint required (Email or Phone security verification)
       if (loginRes.data?.message === 'checkpoint_required' || loginRes.data?.checkpoint_url) {
         let cpUrl = loginRes.data.checkpoint_url || '';
         if (cpUrl && !cpUrl.startsWith('http')) {
@@ -461,7 +300,7 @@ export class InstagramBloksClient {
         try {
           const challengePageRes = await axios.get(this.webCheckpointUrl, {
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
               'Cookie': this.formatCookieHeader(),
               'X-Requested-With': 'XMLHttpRequest',
               'Referer': 'https://www.instagram.com/accounts/login/',
@@ -482,14 +321,13 @@ export class InstagramBloksClient {
             contactMethod = `Phone (${stepData.phone_number})`;
           }
 
-          // If Instagram requires method selection (choice: 0=phone, 1=email)
           if (challengePageRes.data?.step_name === 'select_verify_method' || challengePageRes.data?.fields?.choice !== undefined) {
             const choice = stepData.email ? '1' : '0';
             console.log(`[Instagram Checkpoint] Auto-selecting verification method choice=${choice}...`);
             const choicePost = new URLSearchParams({ choice });
             const dispatchRes = await axios.post(this.webCheckpointUrl, choicePost.toString(), {
               headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
                 'Cookie': this.formatCookieHeader(),
                 'X-CSRFToken': this.extractCsrfToken(),
                 'X-Requested-With': 'XMLHttpRequest',
@@ -506,7 +344,7 @@ export class InstagramBloksClient {
 
           return {
             status: 'SECURE_CHALLENGE',
-            context: this.webCheckpointUrl,
+            context: this.serializeState(),
             message: contactMethod
               ? `Instagram security verification required. Code sent to ${contactMethod}. Enter the 6-digit code below.`
               : 'Instagram security verification required. Code sent to your Email or Phone. Enter the 6-digit code below.',
@@ -515,135 +353,256 @@ export class InstagramBloksClient {
           console.error('[Instagram Checkpoint Error]:', cpErr.message);
           return {
             status: 'SECURE_CHALLENGE',
-            context: this.webCheckpointUrl,
+            context: this.serializeState(),
             message: 'Instagram security verification required. Enter the 6-digit verification code below.',
           };
         }
       }
 
-      if (loginRes.data?.message) {
-        let msg = loginRes.data.message;
-        if (msg.includes('checkpoint_required')) {
-          msg = 'Instagram requires security verification checkpoint.';
-        }
+      // 4. Incorrect Password
+      if (loginRes.data?.user === true && !loginRes.data?.authenticated) {
+        return {
+          status: 'BAD_CREDENTIALS',
+          message: 'The password you entered is incorrect. Please try again.',
+        };
+      }
+
+      // 5. Account Doesn't Exist
+      if (loginRes.data?.user === false) {
+        return {
+          status: 'BAD_CREDENTIALS',
+          message: "The username you entered doesn't appear to belong to an account. Please check your username.",
+        };
+      }
+
+      // 6. Rate Limit
+      if (loginRes.data?.message?.toLowerCase().includes('wait a few minutes') || loginRes.data?.message?.toLowerCase().includes('too many requests')) {
         return {
           status: 'ERROR',
-          message: msg,
+          message: 'Please wait a few minutes before trying again (Instagram rate limit).',
+        };
+      }
+
+      // 7. Account Locked or Disabled
+      if (loginRes.data?.message?.toLowerCase().includes('locked') || loginRes.data?.message?.toLowerCase().includes('disabled')) {
+        return {
+          status: 'BAD_CREDENTIALS',
+          message: 'Your Instagram account has been locked or disabled by Instagram.',
+        };
+      }
+
+      // 8. Any Other Instagram API Error Message
+      if (loginRes.data?.message) {
+        return {
+          status: 'ERROR',
+          message: loginRes.data.message,
         };
       }
     } catch (err: any) {
       console.error('[Instagram Web Fallback Error]:', err.message);
+      return {
+        status: 'ERROR',
+        message: err.message || 'Network error connecting to Instagram.',
+      };
     }
 
     return {
-      status: 'ERROR',
-      message: 'Failed to authenticate with Instagram. Please check credentials or connect via Session ID.',
+      status: 'BAD_CREDENTIALS',
+      message: 'Failed to authenticate with Instagram. Please check your username and password.',
     };
   }
 
   /**
-   * Fallback 3: Masslooker-style Direct Android Signed Login (accounts/login/ with HMAC-SHA256 signature)
+   * Secondary Fallback: Mobile Bloks CAA Login Flow
    */
-  async tryLegacySignedLoginFallback(): Promise<InstagramLoginResult> {
+  async sendMobileBloksLogin(): Promise<InstagramLoginResult> {
     try {
-      console.log('[Instagram Login] Attempting Masslooker-style direct Android signed login fallback...');
-      const IG_SIG_KEY = '19ce5f445dbfd9d29c59dc2a78c616a7fc090a8e018b9267bc4240a30244c53b';
-      const guid = crypto.randomUUID();
-      const deviceId = this.baseDeviceId || `android-${crypto.randomBytes(8).toString('hex')}`;
+      const timestamp = Math.floor(Date.now() / 1000);
+      const waterfallId = crypto.randomUUID();
 
-      const payload = {
-        device_id: deviceId,
-        guid: guid,
-        username: this.username,
-        password: this.password,
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      };
-      const jsonPayload = JSON.stringify(payload);
-      const signature = crypto.createHmac('sha256', IG_SIG_KEY).update(jsonPayload).digest('hex');
-      const postBody = `ig_sig_key_version=4&signed_body=${signature}.${encodeURIComponent(jsonPayload)}`;
+      const postData = new URLSearchParams();
+      postData.append(
+        'params',
+        JSON.stringify({
+          client_input_params: {
+            should_show_nested_nta_from_aymh: 0,
+            device_id: this.baseDeviceId,
+            sim_phones: [],
+            login_attempt_count: 1,
+            secure_family_device_id: '',
+            machine_id: this.baseMachineId,
+            accounts_list: [{ credential_type: 'google_oauth', account_type: 'google_oauth', token: '' }],
+            auth_secure_device_id: '',
+            has_whatsapp_installed: 0,
+            password: `#PWD_INSTAGRAM:0:${timestamp}:${encodeURIComponent(this.password)}`,
+            sso_token_map_json_string: '',
+            family_device_id: this.baseHeaderFamilyDeviceId,
+            fb_ig_device_id: [],
+            device_emails: [],
+            try_num: 1,
+            lois_settings: { lois_token: '', lara_override: '' },
+            event_flow: 'login_manual',
+            event_step: 'home_page',
+            headers_infra_flow_id: '',
+            openid_tokens: { '': '' },
+            client_known_key_hash: '',
+            contact_point: this.username,
+            encrypted_msisdn: '',
+          },
+          server_params: {
+            should_trigger_override_login_2fa_action: 0,
+            is_from_logged_out: 0,
+            should_trigger_override_login_success_action: 0,
+            login_credential_type: 'none',
+            server_login_source: 'login',
+            waterfall_id: waterfallId,
+            login_source: 'Login',
+            is_platform_login: 0,
+            INTERNAL__latency_qpl_marker_id: 36707139,
+            offline_experiment_group: 'caa_iteration_v3_perf_ig_4',
+            is_from_landing_page: 0,
+            password_text_input_id: 'e5bwah:133',
+            is_from_empty_password: 0,
+            ar_event_source: 'login_home_page',
+            qe_device_id: this.baseHeaderDeviceId,
+            username_text_input_id: 'e5bwah:132',
+            layered_homepage_experiment_group: null,
+            device_id: this.baseDeviceId,
+            INTERNAL__latency_qpl_instance_id: 8.5547960900377e13,
+            reg_flow_source: 'login_home_native_integration_point',
+            is_caa_perf_enabled: 1,
+            credential_type: 'password',
+            is_from_password_entry_page: 0,
+          },
+        })
+      );
+      postData.append('bloks_versioning_id', this.baseBlocksVersioningId);
 
-      const response = await axios.post('https://i.instagram.com/api/v1/accounts/login/', postBody, {
-        headers: {
-          'User-Agent': this.baseUserAgent,
-          'Accept-Language': 'en-US',
-          'X-IG-Connection-Type': 'WIFI',
-          'X-IG-Capabilities': '36r/Fx8=',
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        },
-        validateStatus: () => true,
-      });
+      const res = await axios.post(
+        `${this.baseUrl}com.bloks.www.bloks.caa.login.async.send_login_request/`,
+        postData.toString(),
+        {
+          headers: this.getHeaders(),
+          maxRedirects: 0,
+          validateStatus: () => true,
+        }
+      );
 
-      const setCookies = response.headers['set-cookie'] || [];
-      if (Array.isArray(setCookies)) {
-        this.webCookies.push(...setCookies);
+      if (res.headers['ig-set-x-mid']) {
+        this.currentHeaderMid = res.headers['ig-set-x-mid'] as string;
       }
 
-      let foundSessionId = '';
-      for (const c of this.webCookies) {
-        const m = c.match(/sessionid=([^;]+)/);
-        if (m) foundSessionId = m[1];
-      }
+      const body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      console.log(`[Instagram Bloks Login] Response status: ${res.status}, snippet: ${body.slice(0, 300)}`);
 
-      if (response.data?.status === 'ok' && (foundSessionId || response.data?.logged_in_user)) {
-        const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ 
-          sessionid: foundSessionId,
-          user: response.data.logged_in_user 
-        })).toString('base64')}`;
+      // 1. Success check: Authorization token present
+      if (body.includes('IG-Set-Authorization') || body.includes('logged_in_user')) {
+        const { authToken, sessionId } = this.extractAuth(body);
         return {
           status: 'SUCCESS',
-          authorizationToken: authTok,
-          sessionId: foundSessionId,
+          authorizationToken: authToken,
+          sessionId,
         };
       }
 
-      if (response.data?.two_factor_required) {
-        const twoFactorInfo = response.data.two_factor_info;
-        this.mobileTwoFactorIdentifier = twoFactorInfo?.two_factor_identifier || '';
-        this.currentDataContext = this.mobileTwoFactorIdentifier;
-        this.challengeType = 'MOBILE_2FA';
-        const contactHint = twoFactorInfo?.sms_two_factor_on
-          ? `SMS (${twoFactorInfo.obfuscated_phone_number || 'your registered phone'})`
-          : 'Authenticator App';
-        return {
-          status: '2FA',
-          context: this.serializeState(),
-          message: `Two-Factor Authentication required. Enter the 6-digit code from ${contactHint}.`,
-        };
-      }
+      // 2. Navigation Challenge (xr0ni take_challenge flow)
+      if (body.includes('challenge_context') && (body.includes('override_login_2fa_action') || body.includes('navigation.take_challenge') || body.includes('/challenge/'))) {
+        const urlPattern = /\\"url\\":\\"(.*?)\\",\\"api_path/;
+        const contextPattern = /\\"challenge_context\\":\\"(.*?)\\"\}\}\\",\s*\(bk\.action\./;
+        const urlMatch = body.match(urlPattern);
+        const contextMatch = body.match(contextPattern) || body.match(/"challenge_context":"([^"]+)"/);
 
-      if (response.data?.checkpoint_url || response.data?.message === 'checkpoint_required') {
-        let cpUrl = response.data.checkpoint_url || '';
-        if (cpUrl && !cpUrl.startsWith('http')) {
-          cpUrl = `https://www.instagram.com${cpUrl}`;
+        if (contextMatch) {
+          this.currentDataContext = contextMatch[1];
+          if (urlMatch) {
+            this.currentChallengeUrl = urlMatch[1].replace(/\\/g, '');
+          }
+          this.challengeType = 'NAV_CHALLENGE';
+
+          console.log('[Instagram Login] Navigation Challenge detected. Initializing take_challenge...');
+          const challengeInit = await this.initiateNavigationChallenge();
+          if (challengeInit.success) {
+            return {
+              status: 'SECURE_CHALLENGE',
+              context: this.serializeState(),
+              message: challengeInit.contactPoint
+                ? `Security verification required. Code dispatched by Instagram to ${challengeInit.contactPoint}.`
+                : 'Security verification required. Instagram sent a verification code to your email or phone.',
+            };
+          }
         }
-        this.webCheckpointUrl = cpUrl;
-        this.currentDataContext = this.webCheckpointUrl;
-        this.challengeType = 'WEB_CHECKPOINT';
-        return {
-          status: 'SECURE_CHALLENGE',
-          context: this.serializeState(),
-          message: 'Instagram security checkpoint triggered. Please verify in your Instagram app or enter code below.',
-        };
       }
 
-      if (response.data?.message === 'bad_password' || response.data?.message?.includes('password')) {
-        return {
-          status: 'BAD_CREDENTIALS',
-          message: 'Incorrect Instagram username or password.',
-        };
+      // 3. Two-Factor Authentication (Authenticator app TOTP or SMS in Bloks)
+      if (body.includes('redirection_to_two_fac') || body.includes('override_login_2fa_action') || body.includes('two_factor_login')) {
+        const match =
+          body.match(/\\"INTERNAL_INFRA_screen_id\\"\).*?Make,\s*\\"(.*?)\\",\s*\\"two_factor_login\\"/) ||
+          body.match(/\\"INTERNAL_INFRA_THEME\\"\).*?Make,\s*\\"(.*?)\\",\s*\\"two_factor_login\\"/) ||
+          body.match(/\\"INTERNAL_INFRA_THEME\\".*?Make,\s*\\"(.*?)\\",\s*\\"harm_f/);
+        if (match) {
+          this.currentDataContext = match[1];
+          this.challengeType = '2FA';
+          return {
+            status: '2FA',
+            context: this.serializeState(),
+            message: 'Two-Factor Authentication required. Enter the 6-digit code from your Authenticator app.',
+          };
+        }
       }
 
-      return {
-        status: 'ERROR',
-        message: response.data?.message || `Instagram direct login failed (HTTP ${response.status})`,
-      };
+      // 4. Secure Challenge (SMS/Email security code checkpoint in Bloks)
+      if (body.includes('two_step_verification')) {
+        const match = body.match(/\\"device_id\\".*?Make,\s*\\"(.*?)\\",\s*\\"/);
+        if (match) {
+          this.currentDataContext = match[1];
+          this.challengeType = 'SECURE_CHALLENGE';
+
+          console.log('[Instagram Login] Checkpoint detected. Requesting security code dispatch from Instagram...');
+          const secureRes = await this.sendSecureCodeRequest();
+          if (secureRes.success) {
+            return {
+              status: 'SECURE_CHALLENGE',
+              context: this.serializeState(),
+              message: secureRes.contactPoint
+                ? `Security code sent by Instagram to ${secureRes.contactPoint}.`
+                : 'Security code dispatched to your phone or email.',
+            };
+          }
+        }
+      }
+
+      // 5. Explicit incorrect password dialog check
+      const explicitBadCredentials = [
+        'The password you entered is incorrect',
+        'Incorrect password',
+        'wrong password',
+        "The username you entered doesn't appear to belong to an account",
+        'Your account has been locked',
+        'Your account has been disabled',
+      ];
+
+      for (const kw of explicitBadCredentials) {
+        if (body.includes(kw)) {
+          let msg = 'The password you entered is incorrect. Please try again.';
+          if (kw.includes('locked') || kw.includes('disabled')) {
+            msg = 'Your Instagram account has been locked or disabled by Instagram.';
+          } else if (kw.includes("doesn't appear to belong")) {
+            msg = "The username you entered doesn't appear to belong to an account. Please check your username.";
+          }
+          return {
+            status: 'BAD_CREDENTIALS',
+            message: msg,
+          };
+        }
+      }
     } catch (err: any) {
-      console.warn('[Instagram Login] Direct legacy signed login error:', err.message);
-      return {
-        status: 'ERROR',
-        message: err.message,
-      };
+      console.warn('[Instagram Bloks Login Error]:', err.message);
     }
+
+    return {
+      status: 'ERROR',
+      message: 'Mobile Bloks authentication failed.',
+    };
   }
 
   /**
@@ -1066,28 +1025,26 @@ export class InstagramBloksClient {
       }
     }
 
-    // 2. Mobile 2FA verification (if challenge was Mobile 2FA or we have a mobile identifier)
-    if (this.challengeType === 'MOBILE_2FA' || identifier) {
-      console.log(`[Instagram 2FA] Trying Mobile 2FA verification for ${this.username}...`);
-      const mobileRes = await this.verifyMobileTwoFactor(cleanCode, identifier);
-      if (mobileRes.status === 'SUCCESS') return mobileRes;
-
-      // 3. Fallback to Web 2FA endpoint
-      console.log(`[Instagram 2FA] Trying Web 2FA verification for ${this.username}...`);
+    // 2. Web 2FA verification (Default for Web AJAX login flow)
+    if (this.challengeType === 'WEB_2FA' || this.webTwoFactorIdentifier || identifier) {
+      console.log(`[Instagram 2FA] Trying Web 2FA verification for @${this.username}...`);
       try {
         const postData = new URLSearchParams({
           username: this.username,
           verificationCode: cleanCode,
-          identifier: identifier,
+          identifier: this.webTwoFactorIdentifier || identifier,
           trust_this_device: '1',
+          queryParams: '{}',
         });
 
         const twoFaRes = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/', postData.toString(), {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             'Cookie': this.formatCookieHeader(),
             'X-CSRFToken': this.extractCsrfToken(),
             'X-IG-App-ID': '936619743392459',
+            'X-ASBD-ID': '129477',
+            'X-IG-WWW-Claim': '0',
             'X-Requested-With': 'XMLHttpRequest',
             'Referer': 'https://www.instagram.com/accounts/login/two_factor',
             'Origin': 'https://www.instagram.com',
@@ -1106,7 +1063,10 @@ export class InstagramBloksClient {
         }
 
         if (foundSessionId || twoFaRes.data?.authenticated) {
-          const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ sessionid: foundSessionId })).toString('base64')}`;
+          const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ 
+            sessionid: foundSessionId,
+            userId: twoFaRes.data?.userId 
+          })).toString('base64')}`;
           return {
             status: 'SUCCESS',
             authorizationToken: authTok,
@@ -1115,17 +1075,27 @@ export class InstagramBloksClient {
         }
 
         if (twoFaRes.data?.message) {
+          const isInvalidCode = twoFaRes.data.message.includes('check the security code') || 
+                                twoFaRes.data.message.includes('invalid') || 
+                                twoFaRes.data.message.includes('code');
           return {
             status: 'BAD_CREDENTIALS',
-            message: twoFaRes.data.message,
+            message: isInvalidCode
+              ? 'Invalid 2FA verification code. Please check your Authenticator app or SMS.'
+              : twoFaRes.data.message,
           };
         }
       } catch (web2faErr: any) {
-        console.error('[Instagram Web 2FA Verify Error]:', web2faErr);
+        console.error('[Instagram Web 2FA Verify Error]:', web2faErr.message);
       }
 
-      if (mobileRes.status === 'BAD_CREDENTIALS') {
-        return mobileRes;
+      // Mobile 2FA fallback if this originated from a mobile challenge
+      if (this.challengeType === 'MOBILE_2FA' || this.mobileTwoFactorIdentifier) {
+        console.log(`[Instagram 2FA] Trying Mobile 2FA fallback for @${this.username}...`);
+        const mobileRes = await this.verifyMobileTwoFactor(cleanCode, this.mobileTwoFactorIdentifier || identifier);
+        if (mobileRes.status === 'SUCCESS' || mobileRes.status === 'BAD_CREDENTIALS') {
+          return mobileRes;
+        }
       }
     }
 
