@@ -204,19 +204,21 @@ export async function loginInstagramDirect(params: {
     return { status: 'SUCCESS', account };
   }
 
-  if (result.status === '2FA' || result.status === 'SECURE_CHALLENGE') {
+  if (result.status === '2FA' || result.status === 'SECURE_CHALLENGE' || result.status === 'PENDING_APPROVAL') {
     const key = `${params.workspaceId}:${cleanUsername.toLowerCase()}`;
     pendingClients.set(key, client);
     return {
       status: result.status,
       message: result.message,
-      context: result.context || client.serializeState()
+      context: result.context || client.serializeState(),
+      errorCode: result.errorCode
     };
   }
 
   return {
     status: result.status,
-    message: result.message || 'Instagram authentication failed'
+    message: result.message || 'Instagram authentication failed',
+    errorCode: result.errorCode
   };
 }
 

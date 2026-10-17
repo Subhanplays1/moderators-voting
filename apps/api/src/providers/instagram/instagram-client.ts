@@ -364,6 +364,7 @@ export class InstagramBloksClient {
       if (loginRes.data?.user === true && !loginRes.data?.authenticated) {
         return {
           status: 'BAD_CREDENTIALS',
+          errorCode: 'WRONG_PASSWORD',
           message: 'The password you entered is incorrect. Please try again.',
         };
       }
@@ -372,6 +373,7 @@ export class InstagramBloksClient {
       if (loginRes.data?.user === false) {
         return {
           status: 'BAD_CREDENTIALS',
+          errorCode: 'USERNAME_NOT_FOUND',
           message: "The username you entered doesn't appear to belong to an account. Please check your username.",
         };
       }
@@ -380,6 +382,7 @@ export class InstagramBloksClient {
       if (loginRes.data?.message?.toLowerCase().includes('wait a few minutes') || loginRes.data?.message?.toLowerCase().includes('too many requests')) {
         return {
           status: 'ERROR',
+          errorCode: 'RATE_LIMITED',
           message: 'Please wait a few minutes before trying again (Instagram rate limit).',
         };
       }
@@ -388,14 +391,21 @@ export class InstagramBloksClient {
       if (loginRes.data?.message?.toLowerCase().includes('locked') || loginRes.data?.message?.toLowerCase().includes('disabled')) {
         return {
           status: 'BAD_CREDENTIALS',
+          errorCode: 'ACCOUNT_LOCKED',
           message: 'Your Instagram account has been locked or disabled by Instagram.',
         };
       }
 
       // 8. Any Other Instagram API Error Message
       if (loginRes.data?.message) {
+        let code: 'WRONG_PASSWORD' | 'RATE_LIMITED' | 'ACCOUNT_LOCKED' | 'UNKNOWN' = 'UNKNOWN';
+        const msg = loginRes.data.message.toLowerCase();
+        if (msg.includes('password') || msg.includes('incorrect')) code = 'WRONG_PASSWORD';
+        else if (msg.includes('rate') || msg.includes('wait') || msg.includes('limit')) code = 'RATE_LIMITED';
+        else if (msg.includes('lock') || msg.includes('suspend')) code = 'ACCOUNT_LOCKED';
         return {
           status: 'ERROR',
+          errorCode: code,
           message: loginRes.data.message,
         };
       }
@@ -403,12 +413,14 @@ export class InstagramBloksClient {
       console.error('[Instagram Web Fallback Error]:', err.message);
       return {
         status: 'ERROR',
+        errorCode: 'UNKNOWN',
         message: err.message || 'Network error connecting to Instagram.',
       };
     }
 
     return {
       status: 'BAD_CREDENTIALS',
+      errorCode: 'WRONG_PASSWORD',
       message: 'Failed to authenticate with Instagram. Please check your username and password.',
     };
   }
