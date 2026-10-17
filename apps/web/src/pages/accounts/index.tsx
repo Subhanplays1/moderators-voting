@@ -52,6 +52,7 @@ export function Accounts() {
   const [isDirectLoginOpen, setIsDirectLoginOpen] = useState(false);
   const [loginMethod, setLoginMethod] = useState<'PASSWORD' | 'SESSION'>('SESSION');
   const [sessionIdInput, setSessionIdInput] = useState('');
+  const [sessionUsername, setSessionUsername] = useState('');
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -222,6 +223,7 @@ export function Accounts() {
     try {
       const res = await api.post('/accounts/session-connect', {
         sessionId: sessionIdInput.trim(),
+        username: sessionUsername.trim() || undefined,
       });
 
       if (res.data.status === 'SUCCESS') {
@@ -245,6 +247,7 @@ export function Accounts() {
     setLoginUsername('');
     setLoginPassword('');
     setSessionIdInput('');
+    setSessionUsername('');
     setTwoFactorCode('');
     setTwoFactorContext('');
     setLoginStep('LOGIN');
@@ -605,9 +608,23 @@ export function Accounts() {
           )}
 
           {loginError && (
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-start gap-2">
-              <AlertCircle size={15} className="shrink-0 mt-0.5" />
-              <span>{loginError}</span>
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex flex-col gap-2">
+              <div className="flex items-start gap-2">
+                <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                <span>{loginError}</span>
+              </div>
+              {loginMethod === 'PASSWORD' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginMethod('SESSION');
+                    setLoginError('');
+                  }}
+                  className="self-start text-[11px] underline font-semibold text-pink-400 hover:text-pink-300 transition-colors"
+                >
+                  💡 Switch to 1-Click Session Cookie (Bypasses all IP/Challenge issues) &rarr;
+                </button>
+              )}
             </div>
           )}
 
@@ -650,6 +667,19 @@ export function Accounts() {
                       <li>Press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 border border-white/10 text-[10px]">F12</kbd> (Inspect) &rarr; Go to <strong>Application</strong> (or Storage) &rarr; <strong>Cookies</strong> &rarr; <strong>instagram.com</strong>.</li>
                       <li>Find and copy the value of the cookie named <code className="text-pink-300 font-mono font-bold">sessionid</code>.</li>
                     </ol>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="ig-session-username" className="text-xs text-zinc-300 flex items-center justify-between">
+                      <span>Instagram Username <span className="text-zinc-500 text-[11px] font-normal">(Optional - auto-detected if left empty)</span></span>
+                    </Label>
+                    <Input
+                      id="ig-session-username"
+                      placeholder="e.g. itx_subhan.____"
+                      value={sessionUsername}
+                      onChange={(e) => setSessionUsername(e.target.value)}
+                      className="h-9 bg-zinc-900 border-white/10 text-white placeholder:text-zinc-600 text-xs"
+                    />
                   </div>
 
                   <div className="space-y-1.5">

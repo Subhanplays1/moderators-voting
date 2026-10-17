@@ -96,15 +96,18 @@ export function StoryAnalyzer() {
   const handleCreateSession = async () => {
     if (!poll || !selectedOption) return;
     setCreatingSession(true);
+    setError(null);
     try {
       const res = await api.post('/sessions', {
         pollId: poll.id,
         selectedOption,
         name: `Campaign: ${poll.question.slice(0, 30)}...`,
       });
-      navigate('/sessions');
+      if (res.data?.session?.id) {
+        navigate('/sessions');
+      }
     } catch (err: any) {
-      navigate('/sessions');
+      setError(err.response?.data?.message || 'Failed to create campaign session.');
     } finally {
       setCreatingSession(false);
     }

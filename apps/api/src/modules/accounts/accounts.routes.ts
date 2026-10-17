@@ -184,11 +184,12 @@ export default async function accountsRoutes(app: FastifyInstance) {
       schema: { body: InstagramSessionConnectSchema },
       preHandler: [requirePermission('accounts.create')]
     }, async (req, reply) => {
-      const { sessionId } = req.body;
+      const { sessionId, username } = req.body;
       try {
         const result = await accountsService.connectWithSessionId({
           workspaceId: req.workspaceId!,
           sessionId,
+          username,
           addedById: req.user.id
         });
 

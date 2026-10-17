@@ -163,14 +163,14 @@ export async function loginInstagramDirect(params: {
   addedById: string;
 }) {
   const { InstagramBloksClient } = await import('../../providers/instagram/instagram-client');
-  const client = new InstagramBloksClient(params.username, params.password);
+  const cleanUsername = params.username.replace(/^@/, '').trim();
+  const client = new InstagramBloksClient(cleanUsername, params.password);
   
   const result = await client.sendLoginRequest();
 
   if (result.status === 'SUCCESS' && result.authorizationToken) {
     const { encrypt } = await import('../../services/encryption.service');
     const encryptedToken = encrypt(result.authorizationToken);
-    const cleanUsername = params.username.replace(/^@/, '').trim();
 
     const existing = await db.instagramAccount.findFirst({
       where: { workspaceId: params.workspaceId, username: cleanUsername }
@@ -205,12 +205,12 @@ export async function loginInstagramDirect(params: {
   }
 
   if (result.status === '2FA' || result.status === 'SECURE_CHALLENGE') {
-    const key = `${params.workspaceId}:${params.username.toLowerCase()}`;
+    const key = `${params.workspaceId}:${cleanUsername.toLowerCase()}`;
     pendingClients.set(key, client);
     return {
       status: result.status,
       message: result.message,
-      context: result.context
+      context: result.context || client.serializeState()
     };
   }
 
@@ -228,11 +228,14 @@ export async function verifyInstagramTwoFactor(params: {
   addedById: string;
 }) {
   const { InstagramBloksClient } = await import('../../providers/instagram/instagram-client');
-  const key = `${params.workspaceId}:${params.username.toLowerCase()}`;
+  const cleanUsername = params.username.replace(/^@/, '').trim();
+  const key = `${params.workspaceId}:${cleanUsername.toLowerCase()}`;
   let client = pendingClients.get(key);
 
-  if (!client) {
-    client = new InstagramBloksClient(params.username);
+  if (!client && params.context) {
+    client = InstagramBloksClient.deserializeState(params.context, cleanUsername);
+  } else if (!client) {
+    client = new InstagramBloksClient(cleanUsername);
   }
 
   const result = await client.verifyTwoFactorCode(params.code, params.context);
@@ -241,7 +244,6 @@ export async function verifyInstagramTwoFactor(params: {
     pendingClients.delete(key);
     const { encrypt } = await import('../../services/encryption.service');
     const encryptedToken = encrypt(result.authorizationToken);
-    const cleanUsername = params.username.replace(/^@/, '').trim();
 
     const existing = await db.instagramAccount.findFirst({
       where: { workspaceId: params.workspaceId, username: cleanUsername }
@@ -281,18 +283,51 @@ export async function verifyInstagramTwoFactor(params: {
   };
 }
 
+function extractCleanSessionId(raw: string): string {
+  let cleaned = raw.trim().replace(/^["']|["']$/g, '');
+  
+  // 1. If full cookie string like "csrftoken=...; sessionid=...; ds_user_id=..."
+  const cookieMatch = cleaned.match(/(?:^|;\s*)sessionid=([^;\s]+)/i);
+  if (cookieMatch) {
+    cleaned = cookieMatch[1].trim();
+  } else if (cleaned.toLowerCase().startsWith('sessionid=')) {
+    cleaned = cleaned.substring('sessionid='.length).trim();
+  }
+
+  // 2. Decode URL encoding if double-encoded
+  if (cleaned.includes('%253A')) {
+    cleaned = cleaned.replace(/%253A/g, '%3A');
+  }
+
+  // 3. If unencoded colon (12345:abc), normalize to standard Instagram cookie format (12345%3Aabc)
+  if (/^\d+:/.test(cleaned)) {
+    cleaned = cleaned.replace(/^(\d+):/, '$1%3A');
+  }
+
+  return cleaned.trim();
+}
+
 export async function connectWithSessionId(params: {
   workspaceId: string;
   sessionId: string;
+  username?: string;
   addedById: string;
 }) {
-  const cleanSessionId = params.sessionId.trim();
+  const cleanSessionId = extractCleanSessionId(params.sessionId);
+
+  if (!cleanSessionId || cleanSessionId.length < 5) {
+    throw new Error('Invalid Instagram session ID format. Please paste the sessionid cookie value from instagram.com.');
+  }
 
   // Try retrieving user info from Instagram using sessionid cookie
-  let username = '';
+  let username = params.username?.replace(/^@/, '').trim() || '';
   let displayName = '';
   let profilePic = '';
 
+  const userIdMatch = cleanSessionId.match(/^(\d+)%3A/) || cleanSessionId.match(/^(\d+):/);
+  const detectedUserId = userIdMatch ? userIdMatch[1] : '';
+
+  // 1. Try mobile private API accounts/current_user
   try {
     const res = await fetch('https://i.instagram.com/api/v1/accounts/current_user/?edit=true', {
       headers: {
@@ -312,36 +347,33 @@ export async function connectWithSessionId(params: {
     }
   } catch {}
 
-  // Fallback check if private API didn't return username
-  if (!username) {
+  // 2. Try user info lookup via user ID
+  if (!username && detectedUserId) {
     try {
-      const webRes = await fetch('https://www.instagram.com/api/v1/users/web_profile_info/?username=instagram', {
+      const infoRes = await fetch(`https://i.instagram.com/api/v1/users/${detectedUserId}/info/`, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'User-Agent': 'Instagram 361.0.0.46.88 Android (28/9; 300dpi; 900x1600; Asus; ASUS_Z01QD; ASUS_Z01QD; intel; en_US; 674675155)',
           'Cookie': `sessionid=${cleanSessionId};`,
-          'X-IG-App-ID': '936619743392459',
           'Accept': '*/*',
         },
       });
-
-      if (webRes.ok) {
-        // Just checking cookie validity
-      }
-      // Extract user id from sessionid format (usually <user_id>%3A...)
-      const userIdMatch = cleanSessionId.match(/^(\d+)%3A/) || cleanSessionId.match(/^(\d+):/);
-      if (userIdMatch) {
-        username = `user_${userIdMatch[1]}`;
+      if (infoRes.ok) {
+        const infoData: any = await infoRes.json();
+        if (infoData?.user?.username) {
+          username = infoData.user.username;
+          displayName = infoData.user.full_name || username;
+          profilePic = infoData.user.profile_pic_url || '';
+        }
       }
     } catch {}
   }
 
-  // If sessionid format starts with user_id%3A
+  // 3. Fallback to detected user ID or timestamped label
   if (!username) {
-    const userIdMatch = cleanSessionId.match(/^(\d+)%3A/) || cleanSessionId.match(/^(\d+):/);
-    if (userIdMatch) {
-      username = `user_${userIdMatch[1]}`;
+    if (detectedUserId) {
+      username = `user_${detectedUserId}`;
     } else {
-      throw new Error('Invalid Instagram session ID format. The sessionid cookie typically looks like: 123456789%3A...');
+      username = `ig_session_${Date.now().toString().slice(-6)}`;
     }
   }
 

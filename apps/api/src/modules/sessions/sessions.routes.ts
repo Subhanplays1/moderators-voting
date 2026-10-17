@@ -13,7 +13,7 @@ export default async function sessionsRoutes(app: FastifyInstance) {
   server.addHook('preHandler', requireWorkspace);
 
   server.get('/', async (req, reply) => {
-    const sessions = await sessionsService.listSessions(req.workspaceId!);
+    const sessions = await sessionsService.listSessions(req.workspaceId!, req.user.id);
     return reply.send({ sessions });
   });
 
@@ -35,9 +35,21 @@ export default async function sessionsRoutes(app: FastifyInstance) {
     return reply.send({ success: true });
   });
 
+  server.post('/:id/restart', async (req, reply) => {
+    await sessionsService.restartSession(req.workspaceId!, req.params.id as string);
+    await logActivity({ workspaceId: req.workspaceId, userId: req.user.id, action: 'restart_session', target: req.params.id as string });
+    return reply.send({ success: true });
+  });
+
   server.post('/:id/stop', async (req, reply) => {
     await sessionsService.stopSession(req.workspaceId!, req.params.id as string);
     await logActivity({ workspaceId: req.workspaceId, userId: req.user.id, action: 'stop_session', target: req.params.id as string });
+    return reply.send({ success: true });
+  });
+
+  server.delete('/:id', async (req, reply) => {
+    await sessionsService.deleteSession(req.workspaceId!, req.params.id as string);
+    await logActivity({ workspaceId: req.workspaceId, userId: req.user.id, action: 'delete_session', target: req.params.id as string });
     return reply.send({ success: true });
   });
 }

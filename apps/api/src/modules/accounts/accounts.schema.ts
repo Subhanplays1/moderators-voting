@@ -19,6 +19,7 @@ export const InstagramTwoFactorSchema = z.object({
 });
 
 export const InstagramSessionConnectSchema = z.object({
-  sessionId: z.string().min(5)
+  sessionId: z.string().min(5),
+  username: z.string().optional()
 });
 

@@ -21,21 +21,64 @@ export class InstagramBloksClient {
   private baseBlocksVersioningId = '16e9197b928710eafdf1e803935ed8c450a1a2e3eb696bff1184df088b900bcf';
 
   public currentDataContext = '';
-  public challengeType: '2FA' | 'SECURE_CHALLENGE' | 'WEB_2FA' | 'WEB_CHECKPOINT' = '2FA';
+  public challengeType: '2FA' | 'SECURE_CHALLENGE' | 'NAV_CHALLENGE' | 'WEB_2FA' | 'WEB_CHECKPOINT' = '2FA';
   public webTwoFactorIdentifier = '';
   public webCheckpointUrl = '';
   public webCookies: string[] = [];
+  public currentHeaderMid = '';
+  public currentChallengeUrl = '';
 
-  constructor(username: string, password = '') {
+  constructor(username: string, password = '', restoredState?: any) {
     this.username = username.replace(/^@/, '').trim();
     this.password = password;
     
-    // Generate unique Android device footprint per account/session attempt to prevent Instagram rate-limiting across accounts
-    const randHex = crypto.randomBytes(8).toString('hex');
-    this.baseDeviceId = `android-${randHex}`;
-    this.baseMachineId = crypto.randomBytes(16).toString('base64').replace(/[^a-zA-Z0-9_]/g, 'x');
-    this.baseHeaderDeviceId = crypto.randomUUID();
-    this.baseHeaderFamilyDeviceId = crypto.randomUUID();
+    if (restoredState) {
+      this.baseDeviceId = restoredState.baseDeviceId || 'android-ec40bd6622ac9b21';
+      this.baseMachineId = restoredState.baseMachineId || 'Z5d97AABAAF0xC3_hhRHvlrYSyrM';
+      this.baseHeaderDeviceId = restoredState.baseHeaderDeviceId || '552233dc-9663-4973-82bc-b00ad110137a';
+      this.baseHeaderFamilyDeviceId = restoredState.baseHeaderFamilyDeviceId || 'd660a764-9ea5-4f2a-a358-ea3d5fa4bd8f';
+      this.currentDataContext = restoredState.currentDataContext || '';
+      this.challengeType = restoredState.challengeType || '2FA';
+      this.webTwoFactorIdentifier = restoredState.webTwoFactorIdentifier || '';
+      this.webCheckpointUrl = restoredState.webCheckpointUrl || '';
+      this.webCookies = Array.isArray(restoredState.webCookies) ? restoredState.webCookies : [];
+      this.currentHeaderMid = restoredState.currentHeaderMid || '';
+      this.currentChallengeUrl = restoredState.currentChallengeUrl || '';
+    } else {
+      // Standard stable device footprint matching verified Instagram Bloks client
+      this.baseDeviceId = 'android-ec40bd6622ac9b21';
+      this.baseMachineId = 'Z5d97AABAAF0xC3_hhRHvlrYSyrM';
+      this.baseHeaderDeviceId = '552233dc-9663-4973-82bc-b00ad110137a';
+      this.baseHeaderFamilyDeviceId = 'd660a764-9ea5-4f2a-a358-ea3d5fa4bd8f';
+    }
+  }
+
+  public serializeState(): string {
+    return Buffer.from(JSON.stringify({
+      username: this.username,
+      baseDeviceId: this.baseDeviceId,
+      baseMachineId: this.baseMachineId,
+      baseHeaderDeviceId: this.baseHeaderDeviceId,
+      baseHeaderFamilyDeviceId: this.baseHeaderFamilyDeviceId,
+      currentDataContext: this.currentDataContext,
+      challengeType: this.challengeType,
+      webTwoFactorIdentifier: this.webTwoFactorIdentifier,
+      webCheckpointUrl: this.webCheckpointUrl,
+      webCookies: this.webCookies,
+      currentHeaderMid: this.currentHeaderMid,
+      currentChallengeUrl: this.currentChallengeUrl,
+    })).toString('base64');
+  }
+
+  public static deserializeState(contextStr: string, username: string, password = ''): InstagramBloksClient {
+    try {
+      const parsed = JSON.parse(Buffer.from(contextStr, 'base64').toString('utf8'));
+      return new InstagramBloksClient(username || parsed.username, password, parsed);
+    } catch {
+      const client = new InstagramBloksClient(username, password);
+      client.currentDataContext = contextStr;
+      return client;
+    }
   }
 
   public formatCookieHeader(): string {
@@ -60,7 +103,9 @@ export class InstagramBloksClient {
       const m = c.match(/csrftoken=([^;]+)/);
       if (m) return m[1];
     }
-    return crypto.randomBytes(16).toString('hex');
+    const generated = crypto.randomBytes(16).toString('hex');
+    this.webCookies.push(`csrftoken=${generated}; Path=/; Domain=.instagram.com`);
+    return generated;
   }
 
   private getHeaders() {
@@ -119,7 +164,7 @@ export class InstagramBloksClient {
           accounts_list: [{ credential_type: 'google_oauth', account_type: 'google_oauth', token: '' }],
           auth_secure_device_id: '',
           has_whatsapp_installed: 0,
-          password: `#PWD_INSTAGRAM:0:${timestamp}:${this.password}`,
+          password: `#PWD_INSTAGRAM:0:${timestamp}:${encodeURIComponent(this.password)}`,
           sso_token_map_json_string: '',
           family_device_id: this.baseHeaderFamilyDeviceId,
           fb_ig_device_id: [],
@@ -172,6 +217,10 @@ export class InstagramBloksClient {
         validateStatus: () => true,
       }
     );
+
+    if (res.headers['ig-set-x-mid']) {
+      this.currentHeaderMid = res.headers['ig-set-x-mid'] as string;
+    }
 
     const body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
     try {
@@ -227,7 +276,35 @@ export class InstagramBloksClient {
       }
     }
 
-    // 3. Two-Factor Authentication (Authenticator app TOTP)
+    // 3. Navigation Challenge (xr0ni take_challenge flow)
+    if (body.includes('challenge_context') && (body.includes('override_login_2fa_action') || body.includes('navigation.take_challenge') || body.includes('/challenge/'))) {
+      const urlPattern = /\\"url\\":\\"(.*?)\\",\\"api_path/;
+      const contextPattern = /\\"challenge_context\\":\\"(.*?)\\"\}\}\\",\s*\(bk\.action\./;
+      const urlMatch = body.match(urlPattern);
+      const contextMatch = body.match(contextPattern) || body.match(/"challenge_context":"([^"]+)"/);
+
+      if (contextMatch) {
+        this.currentDataContext = contextMatch[1];
+        if (urlMatch) {
+          this.currentChallengeUrl = urlMatch[1].replace(/\\/g, '');
+        }
+        this.challengeType = 'NAV_CHALLENGE';
+
+        console.log('[Instagram Login] Navigation Challenge detected. Initializing take_challenge...');
+        const challengeInit = await this.initiateNavigationChallenge();
+        if (challengeInit.success) {
+          return {
+            status: 'SECURE_CHALLENGE',
+            context: this.serializeState(),
+            message: challengeInit.contactPoint
+              ? `Security verification required. Code dispatched by Instagram to ${challengeInit.contactPoint}.`
+              : 'Security verification required. Instagram sent a verification code to your email or phone.',
+          };
+        }
+      }
+    }
+
+    // 4. Two-Factor Authentication (Authenticator app TOTP)
     if (body.includes('redirection_to_two_fac')) {
       const match =
         body.match(/\\"INTERNAL_INFRA_screen_id\\"\).*?Make,\s*\\"(.*?)\\",\s*\\"two_factor_login\\"/) ||
@@ -237,7 +314,7 @@ export class InstagramBloksClient {
         this.challengeType = '2FA';
         return {
           status: '2FA',
-          context: this.currentDataContext,
+          context: this.serializeState(),
           message: 'Two-Factor Authentication required. Enter the 6-digit code from your Authenticator app.',
         };
       }
@@ -250,13 +327,13 @@ export class InstagramBloksClient {
         this.challengeType = '2FA';
         return {
           status: '2FA',
-          context: this.currentDataContext,
+          context: this.serializeState(),
           message: 'Two-Factor Authentication required. Enter the 6-digit code from your Authenticator app.',
         };
       }
     }
 
-    // 4. Secure Challenge (SMS/Email security code checkpoint)
+    // 5. Secure Challenge (SMS/Email security code checkpoint)
     if (body.includes('override_login_2fa_action') || body.includes('two_step_verification')) {
       const match = body.match(/\\"device_id\\".*?Make,\s*\\"(.*?)\\",\s*\\"/);
       if (match) {
@@ -269,7 +346,7 @@ export class InstagramBloksClient {
         if (secureRes.success) {
           return {
             status: 'SECURE_CHALLENGE',
-            context: this.currentDataContext,
+            context: this.serializeState(),
             message: secureRes.contactPoint
               ? `Security code sent by Instagram to ${secureRes.contactPoint}.`
               : 'Security code dispatched to your phone or email.',
@@ -286,7 +363,10 @@ export class InstagramBloksClient {
     // Fallback: Try official Web Login API if mobile Bloks did not yield a session
     console.log('[Instagram Login] Bloks flow did not yield token, attempting Web AJAX fallback...');
     const webResult = await this.tryWebLoginFallback();
-    if (webResult.status === 'SUCCESS' || webResult.status === '2FA') {
+    if (webResult.status === 'SUCCESS' || webResult.status === '2FA' || webResult.status === 'SECURE_CHALLENGE') {
+      if (webResult.context) {
+        webResult.context = this.serializeState();
+      }
       return webResult;
     }
 
@@ -631,10 +711,114 @@ export class InstagramBloksClient {
   }
 
   /**
+   * Initiates Instagram Bloks navigation challenge (xr0ni flow)
+   */
+  async initiateNavigationChallenge(): Promise<{ success: boolean; contactPoint?: string }> {
+    try {
+      let targetUrl = this.currentChallengeUrl;
+      if (targetUrl) {
+        targetUrl = targetUrl.replace('https://i.instagram.com/challenge/', 'https://i.instagram.com/api/v1/challenge/');
+        const headers = {
+          ...this.getHeaders(),
+          'X-Mid': this.currentHeaderMid || '',
+        };
+
+        const res = await axios.get(`${targetUrl}?guid=${this.baseHeaderDeviceId}&device_id=${this.baseDeviceId}&challenge_context=${this.currentDataContext}`, {
+          headers,
+          validateStatus: () => true,
+        });
+
+        const body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+        const contextMatch = body.match(/"challenge_context":"(.*?)"/);
+        if (contextMatch) {
+          this.currentDataContext = contextMatch[1];
+        }
+      }
+
+      // Dispatch verification code via take_challenge
+      const payload = new URLSearchParams({
+        choice: '1', // 1=Email, 0=SMS
+        has_follow_up_screens: '0',
+        bk_client_context: JSON.stringify({ bloks_version: this.baseBlocksVersioningId, styles_id: 'instagram' }),
+        challenge_context: this.currentDataContext,
+        bloks_versioning_id: this.baseBlocksVersioningId,
+      });
+
+      const dispatchRes = await axios.post(`${this.baseUrl}com.instagram.challenge.navigation.take_challenge/`, payload.toString(), {
+        headers: {
+          ...this.getHeaders(),
+          'X-Mid': this.currentHeaderMid || '',
+        },
+        validateStatus: () => true,
+      });
+
+      const dispatchBody = typeof dispatchRes.data === 'string' ? dispatchRes.data : JSON.stringify(dispatchRes.data);
+      const contactMatch = dispatchBody.match(/Enter the (?:6-digit )?code we sent to (.*?)[",\\]/i) || dispatchBody.match(/sent to (.*?\*\*\*.*?)[",\\]/i);
+      const contactPoint = contactMatch ? contactMatch[1].trim() : undefined;
+
+      return { success: true, contactPoint };
+    } catch (e: any) {
+      console.error('[Instagram Navigation Challenge Init Error]:', e);
+      return { success: false };
+    }
+  }
+
+  /**
+   * Submits security verification code for Bloks navigation challenge
+   */
+  async enterNavigationChallengeCode(code: string): Promise<InstagramLoginResult> {
+    try {
+      const payload = new URLSearchParams({
+        security_code: code.trim(),
+        perf_logging_id: '1456832077',
+        has_follow_up_screens: '0',
+        bk_client_context: JSON.stringify({ bloks_version: this.baseBlocksVersioningId, styles_id: 'instagram' }),
+        challenge_context: this.currentDataContext,
+        bloks_versioning_id: this.baseBlocksVersioningId,
+      });
+
+      const res = await axios.post(`${this.baseUrl}com.instagram.challenge.navigation.take_challenge/`, payload.toString(), {
+        headers: {
+          ...this.getHeaders(),
+          'X-Mid': this.currentHeaderMid || '',
+        },
+        validateStatus: () => true,
+      });
+
+      const body = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      const authHeader = (res.headers['ig-set-authorization'] as string) || '';
+
+      if (authHeader || body.includes('profile_pic_url') || body.includes('fbid_v2') || body.includes('logged_in_user')) {
+        const { authToken, sessionId } = this.extractAuth(body);
+        const finalToken = authHeader || authToken;
+        return {
+          status: 'SUCCESS',
+          authorizationToken: finalToken,
+          sessionId,
+        };
+      }
+
+      if (body.includes('check the code we sent') || body.includes('invalid') || body.includes('security_code')) {
+        return { status: 'BAD_CREDENTIALS', message: 'Invalid verification code. Please check your SMS/Email.' };
+      }
+
+      return { status: 'ERROR', message: 'Verification failed. Please check code or connect via Session Cookie.' };
+    } catch (e: any) {
+      console.error('[Instagram Navigation Challenge Code Error]:', e);
+      return { status: 'ERROR', message: e.message || 'Error submitting challenge code' };
+    }
+  }
+
+  /**
    * Verifies standard TOTP 2FA code or falls back to secure code
    */
   async verifyTwoFactorCode(code: string, context?: string): Promise<InstagramLoginResult> {
     const twoFactorContext = context || this.currentDataContext;
+
+    // 0. Navigation Challenge (xr0ni take_challenge flow)
+    if (this.challengeType === 'NAV_CHALLENGE') {
+      return this.enterNavigationChallengeCode(code);
+    }
 
     // 1. Web Checkpoint (Email or Phone SMS security code verification)
     if (this.challengeType === 'WEB_CHECKPOINT' || (twoFactorContext && twoFactorContext.includes('/challenge/'))) {

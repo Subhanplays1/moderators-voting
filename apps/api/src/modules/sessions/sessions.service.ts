@@ -90,6 +90,7 @@ function submitInstagramStoryVote(params: {
 }
 
 export async function createSession(workspaceId: string, data: { pollId: string; optionId?: string; selectedOption?: string; name?: string; targetVotes?: number; createdBy: string }) {
+  const { decrypt } = await import('../../services/encryption.service');
   const candidateAccounts = await db.instagramAccount.findMany({ 
     where: { 
       workspaceId,
@@ -112,10 +113,6 @@ export async function createSession(workspaceId: string, data: { pollId: string;
 
   const chosenOption = data.selectedOption || data.optionId || 'Option A';
 
-  if (accounts.length === 0) {
-    throw new Error('No Instagram accounts with active voting sessions found. Official OAuth accounts cannot vote on stories; please add accounts via Direct Login or Session ID.');
-  }
-
   const session = await db.votingSession.create({
     data: {
       workspaceId,
@@ -130,20 +127,63 @@ export async function createSession(workspaceId: string, data: { pollId: string;
     }
   });
 
-  await db.votingSessionAccount.createMany({
-    data: accounts.map(acc => ({
-      sessionId: session.id,
-      accountId: acc.id,
-      status: 'PENDING'
-    }))
-  });
+  if (accounts.length > 0) {
+    await db.votingSessionAccount.createMany({
+      data: accounts.map(acc => ({
+        sessionId: session.id,
+        accountId: acc.id,
+        status: 'PENDING'
+      }))
+    });
+  }
 
   return session;
 }
 
 export async function startSession(workspaceId: string, sessionId: string) {
   const session = await db.votingSession.findFirst({ where: { id: sessionId, workspaceId } });
-  if (!session) throw new Error('Not found');
+  if (!session) throw new Error('Session not found');
+
+  const { decrypt } = await import('../../services/encryption.service');
+  let sessionAccounts = await db.votingSessionAccount.findMany({ where: { sessionId } });
+
+  // If no accounts currently linked, or new accounts joined, refresh voting pool
+  if (sessionAccounts.length === 0) {
+    const candidateAccounts = await db.instagramAccount.findMany({ 
+      where: { 
+        workspaceId,
+        status: 'CONNECTED',
+        encryptedToken: { not: null }
+      } 
+    });
+    
+    const validAccounts = candidateAccounts.filter(acc => {
+      try {
+        if (!acc.encryptedToken) return false;
+        const dec = decrypt(acc.encryptedToken);
+        return dec.startsWith('Bearer IGT:2:') || dec.includes('sessionid=');
+      } catch {
+        return false;
+      }
+    });
+
+    if (validAccounts.length === 0) {
+      throw new Error('No Instagram accounts with active voting sessions found. Please connect an account via Direct Login or Session ID in Accounts first.');
+    }
+
+    await db.votingSessionAccount.createMany({
+      data: validAccounts.map(acc => ({
+        sessionId: session.id,
+        accountId: acc.id,
+        status: 'PENDING'
+      }))
+    });
+
+    await db.votingSession.update({
+      where: { id: sessionId },
+      data: { totalAccounts: validAccounts.length }
+    });
+  }
 
   await db.votingSession.update({ 
     where: { id: sessionId }, 
@@ -154,6 +194,30 @@ export async function startSession(workspaceId: string, sessionId: string) {
   processSessionAsync(workspaceId, sessionId).catch(console.error);
   
   return { success: true };
+}
+
+export async function restartSession(workspaceId: string, sessionId: string) {
+  const session = await db.votingSession.findFirst({ where: { id: sessionId, workspaceId } });
+  if (!session) throw new Error('Session not found');
+
+  await db.votingSessionAccount.updateMany({
+    where: { sessionId },
+    data: { status: 'PENDING', error: null, completedAt: null, startedAt: null }
+  });
+
+  await db.votingSession.update({
+    where: { id: sessionId },
+    data: { status: 'DRAFT', completed: 0, failed: 0, completedAt: null, startedAt: null }
+  });
+
+  return { success: true };
+}
+
+export async function deleteSession(workspaceId: string, sessionId: string) {
+  await db.votingSessionAccount.deleteMany({ where: { sessionId } }).catch(() => {});
+  return db.votingSession.deleteMany({
+    where: { id: sessionId, workspaceId }
+  });
 }
 
 export async function stopSession(workspaceId: string, sessionId: string) {
@@ -171,10 +235,26 @@ export async function getSession(workspaceId: string, id: string) {
   });
 }
 
-export async function listSessions(workspaceId: string) {
+export async function listSessions(workspaceId: string, userId?: string) {
   return db.votingSession.findMany({
-    where: { workspaceId },
-    include: { poll: true },
+    where: {
+      OR: [
+        { workspaceId },
+        ...(userId ? [{ createdById: userId }] : [])
+      ]
+    },
+    include: { 
+      poll: {
+        include: {
+          story: true
+        }
+      },
+      sessionAccounts: {
+        include: {
+          account: true
+        }
+      }
+    },
     orderBy: { createdAt: 'desc' }
   });
 }
