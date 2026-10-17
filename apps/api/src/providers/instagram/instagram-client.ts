@@ -360,7 +360,7 @@ export class InstagramBloksClient {
       }
     }
 
-    // Fallback: Try official Web Login API if mobile Bloks did not yield a session
+    // Fallback 2: Try official Web Login API if mobile Bloks did not yield a session
     console.log('[Instagram Login] Bloks flow did not yield token, attempting Web AJAX fallback...');
     const webResult = await this.tryWebLoginFallback();
     if (webResult.status === 'SUCCESS' || webResult.status === '2FA' || webResult.status === 'SECURE_CHALLENGE') {
@@ -370,9 +370,19 @@ export class InstagramBloksClient {
       return webResult;
     }
 
+    // Fallback 3: Masslooker-style Direct Android Signed Login (accounts/login/ with HMAC-SHA256 signature)
+    console.log('[Instagram Login] Web fallback did not succeed, attempting Masslooker direct Android signed login...');
+    const legacyResult = await this.tryLegacySignedLoginFallback();
+    if (legacyResult.status === 'SUCCESS' || legacyResult.status === '2FA' || legacyResult.status === 'SECURE_CHALLENGE') {
+      if (legacyResult.context) {
+        legacyResult.context = this.serializeState();
+      }
+      return legacyResult;
+    }
+
     return {
       status: 'ERROR',
-      message: webResult.message || 'Failed to authenticate with Instagram. Response error from API.',
+      message: legacyResult.message || webResult.message || 'Failed to authenticate with Instagram. Response error from API.',
     };
   }
 
@@ -544,6 +554,107 @@ export class InstagramBloksClient {
       status: 'ERROR',
       message: 'Failed to authenticate with Instagram. Please check credentials or connect via Session ID.',
     };
+  }
+
+  /**
+   * Fallback 3: Masslooker-style Direct Android Signed Login (accounts/login/ with HMAC-SHA256 signature)
+   */
+  async tryLegacySignedLoginFallback(): Promise<InstagramLoginResult> {
+    try {
+      console.log('[Instagram Login] Attempting Masslooker-style direct Android signed login fallback...');
+      const IG_SIG_KEY = '19ce5f445dbfd9d29c59dc2a78c616a7fc090a8e018b9267bc4240a30244c53b';
+      const guid = crypto.randomUUID();
+      const deviceId = this.baseDeviceId || `android-${crypto.randomBytes(8).toString('hex')}`;
+
+      const payload = {
+        device_id: deviceId,
+        guid: guid,
+        username: this.username,
+        password: this.password,
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      };
+      const jsonPayload = JSON.stringify(payload);
+      const signature = crypto.createHmac('sha256', IG_SIG_KEY).update(jsonPayload).digest('hex');
+      const signedBody = `${signature}.${encodeURIComponent(jsonPayload)}`;
+
+      const postBody = new URLSearchParams({
+        ig_sig_key_version: '4',
+        signed_body: signedBody,
+      }).toString();
+
+      const response = await axios.post('https://i.instagram.com/api/v1/accounts/login/', postBody, {
+        headers: {
+          'User-Agent': this.baseUserAgent,
+          'Accept-Language': 'en-US',
+          'X-IG-Connection-Type': 'WIFI',
+          'X-IG-Capabilities': '36r/Fx8=',
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        },
+        validateStatus: () => true,
+      });
+
+      const setCookies = response.headers['set-cookie'] || [];
+      if (Array.isArray(setCookies)) {
+        this.webCookies.push(...setCookies);
+      }
+
+      let foundSessionId = '';
+      for (const c of this.webCookies) {
+        const m = c.match(/sessionid=([^;]+)/);
+        if (m) foundSessionId = m[1];
+      }
+
+      if (response.data?.status === 'ok' && (foundSessionId || response.data?.logged_in_user)) {
+        const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ 
+          sessionid: foundSessionId,
+          user: response.data.logged_in_user 
+        })).toString('base64')}`;
+        return {
+          status: 'SUCCESS',
+          authorizationToken: authTok,
+          sessionId: foundSessionId,
+        };
+      }
+
+      if (response.data?.two_factor_required) {
+        const twoFactorInfo = response.data.two_factor_info;
+        this.webTwoFactorIdentifier = twoFactorInfo?.two_factor_identifier || '';
+        this.challengeType = 'WEB_2FA';
+        return {
+          status: '2FA',
+          context: this.serializeState(),
+          message: 'Instagram requires Two-Factor Authentication (2FA) code.',
+        };
+      }
+
+      if (response.data?.checkpoint_url || response.data?.message === 'checkpoint_required') {
+        this.webCheckpointUrl = response.data.checkpoint_url || '';
+        this.challengeType = 'WEB_CHECKPOINT';
+        return {
+          status: 'SECURE_CHALLENGE',
+          context: this.serializeState(),
+          message: 'Instagram security checkpoint triggered. Please verify in your Instagram app.',
+        };
+      }
+
+      if (response.data?.message === 'bad_password' || response.data?.message?.includes('password')) {
+        return {
+          status: 'BAD_CREDENTIALS',
+          message: 'Incorrect Instagram username or password.',
+        };
+      }
+
+      return {
+        status: 'ERROR',
+        message: response.data?.message || `Instagram direct login failed (HTTP ${response.status})`,
+      };
+    } catch (err: any) {
+      console.warn('[Instagram Login] Direct legacy signed login error:', err.message);
+      return {
+        status: 'ERROR',
+        message: err.message,
+      };
+    }
   }
 
   /**

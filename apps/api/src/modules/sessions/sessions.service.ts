@@ -42,6 +42,8 @@ function submitInstagramStoryVote(params: {
       signed_body: signedBody,
     }).toString();
 
+    const csrf = getCsrfToken(params.sessionId);
+
     const req = https.request({
       hostname: 'i.instagram.com',
       port: 443,
@@ -49,7 +51,9 @@ function submitInstagramStoryVote(params: {
       method: 'POST',
       headers: {
         'User-Agent': 'Instagram 361.0.0.46.88 Android (28/9; 300dpi; 900x1600; Asus; ASUS_Z01QD; ASUS_Z01QD; intel; en_US; 674675155)',
-        'Cookie': `sessionid=${rawSessionId};`,
+        'Cookie': `ds_user_id=${uid}; sessionid=${rawSessionId}; csrftoken=${csrf};`,
+        'X-IG-Connection-Type': 'WIFI',
+        'X-IG-Capabilities': '36r/Fx8=',
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'Content-Length': Buffer.byteLength(body),
         'Accept': '*/*',
