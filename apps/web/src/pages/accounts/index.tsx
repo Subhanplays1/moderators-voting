@@ -16,7 +16,11 @@ import {
   ShieldCheck,
   Lock,
   Eye,
-  EyeOff
+  EyeOff,
+  Smartphone,
+  MessageSquare,
+  Key,
+  CheckCircle
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -61,6 +65,11 @@ export function Accounts() {
   const [loginStep, setLoginStep] = useState<'LOGIN' | '2FA' | 'SUCCESS'>('LOGIN');
   const [loginNotice, setLoginNotice] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [loginErrorCode, setLoginErrorCode] = useState('');
+  const [twoFactorTab, setTwoFactorTab] = useState<'OTP' | 'BACKUP' | 'APPROVAL'>('OTP');
+  const [twoFactorResendLoading, setTwoFactorResendLoading] = useState(false);
+  const [twoFactorPollLoading, setTwoFactorPollLoading] = useState(false);
+  const [twoFactorStatusMessage, setTwoFactorStatusMessage] = useState('');
   const [loginLoading, setLoginLoading] = useState(false);
   const [sessionSuccessInfo, setSessionSuccessInfo] = useState<any>(null);
   const [oauthLoading, setOauthLoading] = useState(false);
@@ -158,11 +167,13 @@ export function Accounts() {
   const handleDirectLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
+    setLoginErrorCode('');
+    setTwoFactorStatusMessage('');
     setLoginLoading(true);
 
     try {
       const res = await api.post('/accounts/login', {
-        username: loginUsername,
+        username: loginUsername.trim(),
         password: loginPassword,
       });
 
@@ -171,34 +182,56 @@ export function Accounts() {
         setLoginStep('SUCCESS');
         setLoginNotice('');
         setLoginError('');
+        setLoginErrorCode('');
         queryClient.invalidateQueries({ queryKey: ['accounts'] });
-      } else if (res.data.status === '2FA' || res.data.status === 'SECURE_CHALLENGE') {
+      } else if (res.data.status === '2FA' || res.data.status === 'SECURE_CHALLENGE' || res.data.status === 'PENDING_APPROVAL') {
         setTwoFactorContext(res.data.context || '');
         setLoginStep('2FA');
         setLoginNotice(res.data.message || 'Two-Factor Authentication required.');
         setLoginError('');
+        setLoginErrorCode(res.data.errorCode || '');
+        if (res.data.status === 'PENDING_APPROVAL') {
+          setTwoFactorTab('APPROVAL');
+        } else {
+          setTwoFactorTab('OTP');
+        }
       } else {
         setLoginNotice('');
         setLoginError(res.data.message || 'Instagram Login failed.');
+        setLoginErrorCode(res.data.errorCode || '');
       }
     } catch (err: any) {
       setLoginNotice('');
       setLoginError(err.response?.data?.message || 'Authentication error.');
+      setLoginErrorCode(err.response?.data?.errorCode || '');
     } finally {
       setLoginLoading(false);
     }
   };
 
-  const handleVerify2FA = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleVerify2FA = async (e?: React.FormEvent, customMethod?: '1' | '2' | '3' | '6') => {
+    if (e) e.preventDefault();
     setLoginError('');
+    setLoginErrorCode('');
+    setTwoFactorStatusMessage('');
     setLoginLoading(true);
+
+    const cleanCode = twoFactorCode.trim().replace(/\s+/g, '');
+    let method = customMethod;
+    if (!method) {
+      if (twoFactorTab === 'BACKUP' || cleanCode.length === 8) {
+        method = '3';
+      } else {
+        method = '1';
+      }
+    }
 
     try {
       const res = await api.post('/accounts/verify-2fa', {
-        username: loginUsername,
-        code: twoFactorCode,
+        username: loginUsername.trim(),
+        code: cleanCode,
         context: twoFactorContext,
+        method
       });
 
       if (res.data.status === 'SUCCESS') {
@@ -206,23 +239,90 @@ export function Accounts() {
         setLoginStep('SUCCESS');
         setLoginNotice('');
         setLoginError('');
+        setLoginErrorCode('');
         queryClient.invalidateQueries({ queryKey: ['accounts'] });
       } else {
         if (res.data?.context) {
           setTwoFactorContext(res.data.context);
         }
         setLoginError(res.data?.message || 'Invalid verification code.');
+        setLoginErrorCode(res.data?.errorCode || '');
       }
     } catch (err: any) {
       setLoginError(err.response?.data?.message || '2FA Verification error.');
+      setLoginErrorCode(err.response?.data?.errorCode || '');
     } finally {
       setLoginLoading(false);
+    }
+  };
+
+  const handleResend2FA = async (method: 'sms' | 'whatsapp') => {
+    setTwoFactorResendLoading(true);
+    setTwoFactorStatusMessage('');
+    setLoginError('');
+    setLoginErrorCode('');
+
+    try {
+      const res = await api.post('/accounts/resend-2fa', {
+        username: loginUsername.trim(),
+        context: twoFactorContext,
+        method
+      });
+
+      if (res.data.status === 'SUCCESS' || res.data.status === '2FA') {
+        if (res.data.context) {
+          setTwoFactorContext(res.data.context);
+        }
+        setTwoFactorStatusMessage(res.data.message || `Verification code has been resent via ${method === 'whatsapp' ? 'WhatsApp' : 'SMS'}!`);
+      } else {
+        setLoginError(res.data.message || `Failed to resend code via ${method}`);
+        setLoginErrorCode(res.data?.errorCode || '');
+      }
+    } catch (err: any) {
+      setLoginError(err.response?.data?.message || `Failed to send code via ${method}`);
+      setLoginErrorCode(err.response?.data?.errorCode || '');
+    } finally {
+      setTwoFactorResendLoading(false);
+    }
+  };
+
+  const handlePollApproval = async () => {
+    setTwoFactorPollLoading(true);
+    setTwoFactorStatusMessage('');
+    setLoginError('');
+    setLoginErrorCode('');
+
+    try {
+      const res = await api.post('/accounts/poll-approval', {
+        username: loginUsername.trim(),
+        context: twoFactorContext
+      });
+
+      if (res.data.status === 'SUCCESS') {
+        setSessionSuccessInfo(res.data.account);
+        setLoginStep('SUCCESS');
+        setLoginNotice('');
+        setLoginError('');
+        setLoginErrorCode('');
+        queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      } else if (res.data.status === 'PENDING_APPROVAL') {
+        setTwoFactorStatusMessage(res.data.message || 'Instagram approval pending: Please open Instagram on your phone, tap "This was me", then click this button again.');
+      } else {
+        setLoginError(res.data.message || 'Device approval check failed.');
+        setLoginErrorCode(res.data?.errorCode || '');
+      }
+    } catch (err: any) {
+      setLoginError(err.response?.data?.message || 'Failed to check device approval.');
+      setLoginErrorCode(err.response?.data?.errorCode || '');
+    } finally {
+      setTwoFactorPollLoading(false);
     }
   };
 
   const handleSessionConnect = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
+    setLoginErrorCode('');
     setLoginLoading(true);
 
     try {
@@ -236,6 +336,7 @@ export function Accounts() {
         setLoginStep('SUCCESS');
         setLoginNotice('');
         setLoginError('');
+        setLoginErrorCode('');
         queryClient.invalidateQueries({ queryKey: ['accounts'] });
       } else {
         setLoginError(res.data.message || 'Session ID connection failed.');
@@ -258,6 +359,11 @@ export function Accounts() {
     setLoginStep('LOGIN');
     setLoginNotice('');
     setLoginError('');
+    setLoginErrorCode('');
+    setTwoFactorTab('OTP');
+    setTwoFactorResendLoading(false);
+    setTwoFactorPollLoading(false);
+    setTwoFactorStatusMessage('');
     setSessionSuccessInfo(null);
   };
 
@@ -627,18 +733,83 @@ export function Accounts() {
             </div>
           )}
 
+          {twoFactorStatusMessage && (
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-start gap-2">
+              <CheckCircle size={15} className="shrink-0 mt-0.5 text-emerald-400" />
+              <span>{twoFactorStatusMessage}</span>
+            </div>
+          )}
+
           {loginError && (
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex flex-col gap-2">
+            <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-300 text-xs flex flex-col gap-2.5">
               <div className="flex items-start gap-2">
-                <AlertCircle size={15} className="shrink-0 mt-0.5" />
-                <span>{loginError}</span>
+                <AlertCircle size={16} className="shrink-0 mt-0.5 text-red-400" />
+                <div className="space-y-1">
+                  <span className="font-semibold text-red-200">
+                    {loginErrorCode === 'WRONG_PASSWORD' && '⚠️ Ghalat Password (Incorrect Password)'}
+                    {loginErrorCode === 'RATE_LIMITED' && '⏳ Instagram Cooldown (Rate Limited)'}
+                    {loginErrorCode === 'TWO_FACTOR_INVALID_CODE' && '❌ Invalid / Expired 2FA Code'}
+                    {loginErrorCode === 'CHECKPOINT_REQUIRED' && '🛡️ Instagram Security Verification Required'}
+                    {loginErrorCode === 'ACCOUNT_LOCKED' && '🔒 Account Temporarily Locked by Instagram'}
+                    {!['WRONG_PASSWORD', 'RATE_LIMITED', 'TWO_FACTOR_INVALID_CODE', 'CHECKPOINT_REQUIRED', 'ACCOUNT_LOCKED'].includes(loginErrorCode) && 'Authentication Error'}
+                  </span>
+                  <p className="text-[11.5px] text-zinc-300 leading-relaxed">{loginError}</p>
+                </div>
               </div>
-              {loginMethod === 'PASSWORD' && (
+
+              {loginErrorCode === 'WRONG_PASSWORD' && (
+                <div className="pt-2 border-t border-red-500/15 text-[11px] space-y-1.5 text-zinc-300">
+                  <p className="font-medium text-pink-300">💡 Hal (Solution):</p>
+                  <p>1. Check karein ke password Instagram mobile app par theek chal raha hai.</p>
+                  <p>2. Ya direct <strong>Session Cookie</strong> paste karke baghair password foran login karein:</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginMethod('SESSION');
+                      setLoginError('');
+                      setLoginErrorCode('');
+                    }}
+                    className="mt-1 px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white font-semibold transition-colors flex items-center gap-1.5"
+                  >
+                    <Key size={13} /> Switch to 1-Click Session ID &rarr;
+                  </button>
+                </div>
+              )}
+
+              {loginErrorCode === 'RATE_LIMITED' && (
+                <div className="pt-2 border-t border-red-500/15 text-[11px] space-y-1.5 text-zinc-300">
+                  <p className="font-medium text-amber-300">💡 Hal (Solution) - Cooldown Bypass:</p>
+                  <p>Instagram ne bar bar login ki wajah se temporary cooldown lagaya hai. <strong>Aapko wait karne ki zaroorat nahi!</strong></p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoginMethod('SESSION');
+                      setLoginError('');
+                      setLoginErrorCode('');
+                    }}
+                    className="mt-1 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold transition-colors flex items-center gap-1.5"
+                  >
+                    <Key size={13} /> Session ID Se Cooldown Bypass Karein &rarr;
+                  </button>
+                </div>
+              )}
+
+              {loginErrorCode === 'TWO_FACTOR_INVALID_CODE' && (
+                <div className="pt-2 border-t border-red-500/15 text-[11px] space-y-1 text-zinc-300">
+                  <p className="font-medium text-pink-300">💡 Hal (Solution):</p>
+                  <p>• Agar Authenticator app ka code expire ho gaya ho tou naya 30-second code dekhein.</p>
+                  <p>• Neeche diye gaye <strong>"Resend via SMS"</strong> ya <strong>"Send via WhatsApp"</strong> se naya code mangwayein.</p>
+                  <p>• Ya <strong>"Backup Recovery Code"</strong> tab me 8-digit code enter karein.</p>
+                </div>
+              )}
+
+              {loginMethod === 'PASSWORD' && !['WRONG_PASSWORD', 'RATE_LIMITED'].includes(loginErrorCode) && (
                 <button
                   type="button"
                   onClick={() => {
                     setLoginMethod('SESSION');
                     setLoginError('');
+                    setLoginErrorCode('');
                   }}
                   className="self-start text-[11px] underline font-semibold text-pink-400 hover:text-pink-300 transition-colors"
                 >
@@ -825,31 +996,206 @@ export function Accounts() {
           )}
 
           {loginStep === '2FA' && (
-            <form onSubmit={handleVerify2FA} className="space-y-4 py-2">
-              <div className="space-y-2">
-                <Label htmlFor="twofa-code" className="text-xs font-semibold text-zinc-200">
-                  Enter 6-Digit Verification Code
-                </Label>
-                <p className="text-[11px] text-zinc-400">
-                  Instagram ne security code aapke Email ya Phone (SMS) par dispatch kiya hai. Code check karke yahan darj karein:
-                </p>
-                <Input
-                  id="twofa-code"
-                  placeholder="123456"
-                  maxLength={8}
-                  value={twoFactorCode}
-                  onChange={(e) => setTwoFactorCode(e.target.value)}
-                  required
-                  autoFocus
-                  className="h-12 bg-zinc-900 border-pink-500/30 focus:border-pink-500 text-white text-center font-mono text-xl tracking-widest placeholder:text-zinc-600 rounded-xl"
-                />
+            <div className="space-y-4 py-2">
+              {/* 2FA Method Selector Tabs */}
+              <div className="grid grid-cols-3 p-1 rounded-xl bg-zinc-900 border border-white/5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => { setTwoFactorTab('OTP'); setLoginError(''); setTwoFactorStatusMessage(''); }}
+                  className={`py-2 px-2 font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    twoFactorTab === 'OTP'
+                      ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-md'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Smartphone size={13} />
+                  <span>App / SMS</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setTwoFactorTab('BACKUP'); setLoginError(''); setTwoFactorStatusMessage(''); }}
+                  className={`py-2 px-2 font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    twoFactorTab === 'BACKUP'
+                      ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-md'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Key size={13} />
+                  <span>Backup Code</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setTwoFactorTab('APPROVAL'); setLoginError(''); setTwoFactorStatusMessage(''); }}
+                  className={`py-2 px-2 font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                    twoFactorTab === 'APPROVAL'
+                      ? 'bg-gradient-to-r from-pink-600 to-purple-600 text-white shadow-md'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <ShieldCheck size={13} />
+                  <span>In-App Tap</span>
+                </button>
               </div>
 
-              <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300 flex items-start justify-between gap-2">
-                <div>
-                  <p className="font-semibold text-purple-200">💡 Code nahi mil raha ya Instagram verification fail ho rahi hai?</p>
-                  <p className="text-[11px] text-zinc-400 mt-0.5">
-                    Aap direct Instagram session cookie paste karke baghair kisi code ke 100% login ho sakte hain.
+              {/* Tab 1: 6-Digit OTP */}
+              {twoFactorTab === 'OTP' && (
+                <form onSubmit={(e) => handleVerify2FA(e, '1')} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="twofa-code-otp" className="text-xs font-semibold text-zinc-200">
+                      Enter 6-Digit Verification Code
+                    </Label>
+                    <p className="text-[11px] text-zinc-400">
+                      Authenticator App (Google/Duo) ya SMS / WhatsApp se mila 6-digit code darj karein:
+                    </p>
+                    <Input
+                      id="twofa-code-otp"
+                      placeholder="123456"
+                      maxLength={8}
+                      value={twoFactorCode}
+                      onChange={(e) => setTwoFactorCode(e.target.value)}
+                      required
+                      autoFocus
+                      className="h-12 bg-zinc-900 border-pink-500/30 focus:border-pink-500 text-white text-center font-mono text-xl tracking-widest placeholder:text-zinc-600 rounded-xl"
+                    />
+                  </div>
+
+                  {/* Resend Code Options */}
+                  <div className="p-3 rounded-xl bg-zinc-900/60 border border-white/5 space-y-2">
+                    <p className="text-[11px] font-semibold text-zinc-300">Code receive nahi hua? Naya code mangwayein:</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={twoFactorResendLoading}
+                        onClick={() => handleResend2FA('sms')}
+                        className="text-xs h-8 gap-1.5 border-white/10 hover:bg-white/5 text-zinc-300"
+                      >
+                        {twoFactorResendLoading ? <RefreshCw size={12} className="animate-spin" /> : <Smartphone size={12} className="text-pink-400" />}
+                        Resend via SMS
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={twoFactorResendLoading}
+                        onClick={() => handleResend2FA('whatsapp')}
+                        className="text-xs h-8 gap-1.5 border-white/10 hover:bg-white/5 text-emerald-400"
+                      >
+                        {twoFactorResendLoading ? <RefreshCw size={12} className="animate-spin" /> : <MessageSquare size={12} className="text-emerald-400" />}
+                        Send via WhatsApp
+                      </Button>
+                    </div>
+                  </div>
+
+                  <DialogFooter className="pt-2">
+                    <Button type="button" variant="outline" onClick={() => setLoginStep('LOGIN')}>
+                      Back
+                    </Button>
+                    <Button 
+                      type="submit" 
+                      disabled={loginLoading || !twoFactorCode.trim()}
+                      className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-semibold rounded-xl"
+                    >
+                      {loginLoading ? 'Verifying Code...' : 'Submit 6-Digit Code'}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              )}
+
+              {/* Tab 2: 8-Digit Backup Recovery Code */}
+              {twoFactorTab === 'BACKUP' && (
+                <form onSubmit={(e) => handleVerify2FA(e, '3')} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="twofa-code-backup" className="text-xs font-semibold text-zinc-200">
+                      Enter 8-Digit Backup Recovery Code
+                    </Label>
+                    <p className="text-[11px] text-zinc-400">
+                      Instagram Security Settings &rarr; Two-Factor Authentication &rarr; Backup Codes me se koi ek 8-digit emergency code yahan darj karein:
+                    </p>
+                    <Input
+                      id="twofa-code-backup"
+                      placeholder="87654321"
+                      maxLength={10}
+                      value={twoFactorCode}
+                      onChange={(e) => setTwoFactorCode(e.target.value)}
+                      required
+                      autoFocus
+                      className="h-12 bg-zinc-900 border-purple-500/30 focus:border-purple-500 text-white text-center font-mono text-xl tracking-widest placeholder:text-zinc-600 rounded-xl"
+                    />
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-300">
+                    <p className="font-semibold text-purple-200">💡 Backup Codes kahan milte hain?</p>
+                    <p className="text-[11px] text-zinc-400 mt-1">
+                      Instagram App &rarr; Settings & Privacy &rarr; Accounts Center &rarr; Password and security &rarr; Two-factor authentication &rarr; Additional methods &rarr; Backup codes.
+                    </p>
+                  </div>
+
+                  <DialogFooter className="pt-2">
+                    <Button type="button" variant="outline" onClick={() => setLoginStep('LOGIN')}>
+                      Back
+                    </Button>
+                    <Button 
+                      type="submit" 
+                      disabled={loginLoading || !twoFactorCode.trim()}
+                      className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white font-semibold rounded-xl"
+                    >
+                      {loginLoading ? 'Verifying Backup Code...' : 'Submit 8-Digit Backup Code'}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              )}
+
+              {/* Tab 3: Phone In-App Approval */}
+              {twoFactorTab === 'APPROVAL' && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 space-y-3">
+                    <div className="flex items-center gap-2 text-blue-300 font-semibold text-xs">
+                      <Smartphone size={16} />
+                      <span>Approve On Your Mobile Device</span>
+                    </div>
+                    <ol className="text-[11.5px] text-zinc-300 space-y-2 list-decimal list-inside leading-relaxed">
+                      <li>Apne smartphone par <strong>Instagram App</strong> open karein.</li>
+                      <li>Notification ya popup aayega: <strong>"Did you just log in near ...?"</strong></li>
+                      <li>Wahan <strong className="text-emerald-400">"This was me"</strong> (or "Approve") par tap karein.</li>
+                      <li>Tap karne ke baad neeche <strong>"I Approved on Instagram App"</strong> button dabayein:</li>
+                    </ol>
+                  </div>
+
+                  <Button
+                    type="button"
+                    disabled={twoFactorPollLoading}
+                    onClick={handlePollApproval}
+                    className="w-full h-12 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/20 text-sm gap-2"
+                  >
+                    {twoFactorPollLoading ? (
+                      <>
+                        <RefreshCw size={16} className="animate-spin" />
+                        Checking Instagram Approval...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle size={16} />
+                        I Approved on Instagram App (Check Now)
+                      </>
+                    )}
+                  </Button>
+
+                  <DialogFooter className="pt-2">
+                    <Button type="button" variant="outline" onClick={() => setLoginStep('LOGIN')}>
+                      Back
+                    </Button>
+                  </DialogFooter>
+                </div>
+              )}
+
+              {/* Universal 1-Click Cookie Bypass Helper */}
+              <div className="p-3 rounded-xl bg-zinc-900/80 border border-white/5 text-xs text-zinc-300 flex items-center justify-between gap-2 mt-2">
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-white">💡 Agar verification code nahi mil raha?</p>
+                  <p className="text-[11px] text-zinc-400">
+                    Aap direct Instagram sessionid cookie se baghair kisi code ke foran connect kar sakte hain.
                   </p>
                 </div>
                 <button
@@ -858,27 +1204,15 @@ export function Accounts() {
                     setLoginMethod('SESSION');
                     setLoginStep('LOGIN');
                     setLoginError('');
+                    setLoginErrorCode('');
                     setLoginNotice('');
                   }}
-                  className="shrink-0 px-2.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-semibold transition-colors"
+                  className="shrink-0 px-3 py-1.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-[11px] font-semibold transition-colors"
                 >
                   Use Cookie
                 </button>
               </div>
-
-              <DialogFooter className="pt-2">
-                <Button type="button" variant="outline" onClick={() => setLoginStep('LOGIN')}>
-                  Back
-                </Button>
-                <Button 
-                  type="submit" 
-                  disabled={loginLoading || !twoFactorCode.trim()}
-                  className="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-semibold rounded-xl"
-                >
-                  {loginLoading ? 'Verifying Code...' : 'Submit Code & Login'}
-                </Button>
-              </DialogFooter>
-            </form>
+            </div>
           )}
 
           {loginStep === 'SUCCESS' && (

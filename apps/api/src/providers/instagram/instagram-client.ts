@@ -2,11 +2,12 @@ import axios from 'axios';
 import crypto from 'crypto';
 
 export interface InstagramLoginResult {
-  status: 'SUCCESS' | '2FA' | 'SECURE_CHALLENGE' | 'BAD_CREDENTIALS' | 'ERROR';
+  status: 'SUCCESS' | '2FA' | 'SECURE_CHALLENGE' | 'BAD_CREDENTIALS' | 'PENDING_APPROVAL' | 'ERROR';
   authorizationToken?: string;
   sessionId?: string;
   message?: string;
   context?: string;
+  errorCode?: 'WRONG_PASSWORD' | 'USERNAME_NOT_FOUND' | 'RATE_LIMITED' | 'ACCOUNT_LOCKED' | 'INVALID_2FA_CODE' | 'CHECKPOINT_REQUIRED' | 'PENDING_APPROVAL' | 'UNKNOWN';
 }
 
 export class InstagramBloksClient {
@@ -950,9 +951,9 @@ export class InstagramBloksClient {
   }
 
   /**
-   * Verifies standard TOTP 2FA code, SMS code, or security checkpoint
+   * Verifies standard TOTP 2FA code, SMS code, backup recovery code, or security checkpoint
    */
-  async verifyTwoFactorCode(code: string, context?: string): Promise<InstagramLoginResult> {
+  async verifyTwoFactorCode(code: string, context?: string, method?: string): Promise<InstagramLoginResult> {
     const cleanCode = code.trim();
     const twoFactorContext = context || this.currentDataContext;
     const identifier = this.mobileTwoFactorIdentifier || this.webTwoFactorIdentifier || twoFactorContext || '';
@@ -973,7 +974,7 @@ export class InstagramBloksClient {
 
         const verifyRes = await axios.post(targetUrl, postData.toString(), {
           headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             'Cookie': this.formatCookieHeader(),
             'X-CSRFToken': this.extractCsrfToken(),
             'X-Requested-With': 'XMLHttpRequest',
@@ -1009,6 +1010,7 @@ export class InstagramBloksClient {
           return {
             status: 'BAD_CREDENTIALS',
             message: 'Invalid verification code entered. Please check your SMS / Email and try again.',
+            errorCode: 'INVALID_2FA_CODE',
           };
         }
 
@@ -1025,14 +1027,18 @@ export class InstagramBloksClient {
       }
     }
 
-    // 2. Web 2FA verification (Default for Web AJAX login flow)
+    // 2. Web 2FA verification (Supports TOTP, SMS, Backup Code, WhatsApp)
     if (this.challengeType === 'WEB_2FA' || this.webTwoFactorIdentifier || identifier) {
       console.log(`[Instagram 2FA] Trying Web 2FA verification for @${this.username}...`);
       try {
+        const isBackupCode = method === '3' || cleanCode.length === 8;
+        const verificationMethod = method || (isBackupCode ? '3' : '1');
+
         const postData = new URLSearchParams({
           username: this.username,
           verificationCode: cleanCode,
           identifier: this.webTwoFactorIdentifier || identifier,
+          verification_method: verificationMethod,
           trust_this_device: '1',
           queryParams: '{}',
         });
@@ -1081,8 +1087,11 @@ export class InstagramBloksClient {
           return {
             status: 'BAD_CREDENTIALS',
             message: isInvalidCode
-              ? 'Invalid 2FA verification code. Please check your Authenticator app or SMS.'
+              ? (isBackupCode 
+                  ? 'Invalid backup recovery code. Please check your 8-digit backup code and try again.' 
+                  : 'Invalid 2FA verification code. Please check your Authenticator app or SMS.')
               : twoFaRes.data.message,
+            errorCode: 'INVALID_2FA_CODE',
           };
         }
       } catch (web2faErr: any) {
@@ -1099,7 +1108,7 @@ export class InstagramBloksClient {
       }
     }
 
-    // 4. Mobile Bloks SECURE_CHALLENGE
+    // 3. Mobile Bloks SECURE_CHALLENGE
     if (this.challengeType === 'SECURE_CHALLENGE') {
       return this.enterSecureCodeRequest(cleanCode, twoFactorContext);
     }
@@ -1160,9 +1169,195 @@ export class InstagramBloksClient {
     }
 
     if (body.includes('security code and try again')) {
-      return { status: 'BAD_CREDENTIALS', message: 'Invalid 2FA code entered' };
+      return { status: 'BAD_CREDENTIALS', message: 'Invalid 2FA code entered', errorCode: 'INVALID_2FA_CODE' };
     }
 
     return { status: 'ERROR', message: 'Verification failed' };
+  }
+
+  /**
+   * Resends 2FA code via SMS or WhatsApp
+   */
+  async resendTwoFactorCode(method: 'sms' | 'whatsapp' = 'sms'): Promise<{ success: boolean; message: string }> {
+    try {
+      const identifier = this.webTwoFactorIdentifier || this.mobileTwoFactorIdentifier || this.currentDataContext;
+      console.log(`[Instagram 2FA Resend] Requesting resend via ${method} for @${this.username}...`);
+
+      const postData = new URLSearchParams({
+        username: this.username,
+        identifier: identifier,
+        verification_method: method === 'whatsapp' ? '6' : '2',
+      });
+
+      const res = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/resend/', postData.toString(), {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+          'Cookie': this.formatCookieHeader(),
+          'X-CSRFToken': this.extractCsrfToken(),
+          'X-IG-App-ID': '936619743392459',
+          'X-ASBD-ID': '129477',
+          'X-IG-WWW-Claim': '0',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Referer': 'https://www.instagram.com/accounts/login/two_factor',
+          'Origin': 'https://www.instagram.com',
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        validateStatus: () => true,
+      });
+
+      if (res.data?.status === 'ok' || res.data?.message?.includes('sent') || res.status === 200) {
+        return {
+          success: true,
+          message: method === 'whatsapp' 
+            ? 'A new verification code has been dispatched to your WhatsApp.'
+            : 'A new verification code has been dispatched to your mobile number via SMS.',
+        };
+      }
+
+      // Fallback: private mobile SMS dispatch
+      if (method === 'sms') {
+        const IG_SIG_KEY = '19ce5f445dbfd9d29c59dc2a78c616a7fc090a8e018b9267bc4240a30244c53b';
+        const mobilePayload = JSON.stringify({
+          two_factor_identifier: identifier,
+          username: this.username,
+          device_id: this.baseDeviceId,
+        });
+        const signature = crypto.createHmac('sha256', IG_SIG_KEY).update(mobilePayload).digest('hex');
+        const mobilePost = `ig_sig_key_version=4&signed_body=${signature}.${encodeURIComponent(mobilePayload)}`;
+
+        const mobileRes = await axios.post('https://i.instagram.com/api/v1/accounts/send_two_factor_login_sms/', mobilePost, {
+          headers: {
+            'User-Agent': this.baseUserAgent,
+            'Cookie': this.formatCookieHeader(),
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          },
+          validateStatus: () => true,
+        });
+
+        if (mobileRes.data?.status === 'ok') {
+          return {
+            success: true,
+            message: 'A new verification code has been sent to your registered phone number.',
+          };
+        }
+      }
+
+      return {
+        success: false,
+        message: res.data?.message || 'Could not resend verification code. Please wait a moment before trying again.',
+      };
+    } catch (err: any) {
+      console.error('[Instagram 2FA Resend Error]:', err.message);
+      return {
+        success: false,
+        message: err.message || 'Error communicating with Instagram to resend code.',
+      };
+    }
+  }
+
+  /**
+   * Checks if user approved "This was me" in their Instagram mobile app
+   */
+  async checkInAppApproval(): Promise<InstagramLoginResult> {
+    try {
+      console.log(`[Instagram In-App Approval] Checking device approval status for @${this.username}...`);
+
+      // 1. If we have a checkpoint URL
+      if (this.webCheckpointUrl) {
+        const cpRes = await axios.get(this.webCheckpointUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Cookie': this.formatCookieHeader(),
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': 'https://www.instagram.com/accounts/login/',
+            'Accept': 'application/json, text/html, */*',
+          },
+          maxRedirects: 5,
+          validateStatus: () => true,
+        });
+
+        const newCookies = cpRes.headers['set-cookie'] || [];
+        this.webCookies.push(...newCookies);
+
+        let foundSessionId = '';
+        for (const c of this.webCookies) {
+          const m = c.match(/sessionid=([^;]+)/);
+          if (m) foundSessionId = m[1];
+        }
+
+        if (foundSessionId || cpRes.data?.authenticated || (cpRes.status === 200 && cpRes.data?.status === 'ok')) {
+          if (foundSessionId) {
+            const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ sessionid: foundSessionId })).toString('base64')}`;
+            return {
+              status: 'SUCCESS',
+              authorizationToken: authTok,
+              sessionId: foundSessionId,
+            };
+          }
+        }
+      }
+
+      // 2. Check via Web 2FA poll/check
+      const identifier = this.webTwoFactorIdentifier || this.mobileTwoFactorIdentifier || this.currentDataContext;
+      if (identifier) {
+        const postData = new URLSearchParams({
+          username: this.username,
+          identifier: identifier,
+          check_approval: '1',
+        });
+
+        const pollRes = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/', postData.toString(), {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Cookie': this.formatCookieHeader(),
+            'X-CSRFToken': this.extractCsrfToken(),
+            'X-IG-App-ID': '936619743392459',
+            'X-ASBD-ID': '129477',
+            'X-IG-WWW-Claim': '0',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': 'https://www.instagram.com/accounts/login/two_factor',
+            'Origin': 'https://www.instagram.com',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          validateStatus: () => true,
+        });
+
+        const cookies = pollRes.headers['set-cookie'] || [];
+        this.webCookies.push(...cookies);
+
+        let foundSessionId = '';
+        for (const c of this.webCookies) {
+          const m = c.match(/sessionid=([^;]+)/);
+          if (m) foundSessionId = m[1];
+        }
+
+        if (foundSessionId || pollRes.data?.authenticated) {
+          const authTok = `Bearer IGT:2:${Buffer.from(JSON.stringify({ 
+            sessionid: foundSessionId,
+            userId: pollRes.data?.userId 
+          })).toString('base64')}`;
+          return {
+            status: 'SUCCESS',
+            authorizationToken: authTok,
+            sessionId: foundSessionId,
+          };
+        }
+      }
+
+      return {
+        status: 'PENDING_APPROVAL',
+        context: this.serializeState(),
+        message: 'Approval pending. Please open Instagram on your phone and tap "This was me", then try again.',
+        errorCode: 'PENDING_APPROVAL',
+      };
+    } catch (err: any) {
+      console.error('[Instagram Approval Check Error]:', err.message);
+      return {
+        status: 'PENDING_APPROVAL',
+        context: this.serializeState(),
+        message: 'Could not verify approval yet. Please make sure you approved the prompt on your phone.',
+        errorCode: 'PENDING_APPROVAL',
+      };
+    }
   }
 }

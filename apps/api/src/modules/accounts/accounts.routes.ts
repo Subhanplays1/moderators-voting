@@ -4,7 +4,7 @@ import * as accountsService from './accounts.service';
 import { authenticate } from '../../middleware/auth';
 import { requireWorkspace } from '../../middleware/workspace';
 import { requirePermission } from '../../config/permissions';
-import { CreateAccountSchema, InstagramLoginSchema, InstagramTwoFactorSchema, InstagramSessionConnectSchema } from './accounts.schema';
+import { CreateAccountSchema, InstagramLoginSchema, InstagramTwoFactorSchema, InstagramResendTwoFactorSchema, InstagramPollApprovalSchema, InstagramSessionConnectSchema } from './accounts.schema';
 import { logActivity } from '../../services/activity-log.service';
 import { ProductionProvider } from '../../providers/instagram/production.provider';
 import { config } from '../../config';
@@ -150,13 +150,14 @@ export default async function accountsRoutes(app: FastifyInstance) {
       schema: { body: InstagramTwoFactorSchema },
       preHandler: [requirePermission('accounts.create')]
     }, async (req, reply) => {
-      const { username, code, context } = req.body;
+      const { username, code, context, method } = req.body;
       try {
         const result = await accountsService.verifyInstagramTwoFactor({
           workspaceId: req.workspaceId!,
           username,
           code,
           context,
+          method,
           addedById: req.user.id
         });
 
@@ -176,6 +177,61 @@ export default async function accountsRoutes(app: FastifyInstance) {
         return reply.code(400).send({
           status: 'ERROR',
           message: err.message || 'Two-factor verification failed'
+        });
+      }
+    });
+
+    server.post('/resend-2fa', {
+      schema: { body: InstagramResendTwoFactorSchema },
+      preHandler: [requirePermission('accounts.create')]
+    }, async (req, reply) => {
+      const { username, context, method } = req.body;
+      try {
+        const result = await accountsService.resendInstagramTwoFactorCode({
+          workspaceId: req.workspaceId!,
+          username,
+          context,
+          method
+        });
+        return reply.send(result);
+      } catch (err: any) {
+        req.log.error(err);
+        return reply.code(400).send({
+          status: 'ERROR',
+          message: err.message || 'Failed to resend 2FA verification code'
+        });
+      }
+    });
+
+    server.post('/poll-approval', {
+      schema: { body: InstagramPollApprovalSchema },
+      preHandler: [requirePermission('accounts.create')]
+    }, async (req, reply) => {
+      const { username, context } = req.body;
+      try {
+        const result = await accountsService.pollInstagramApproval({
+          workspaceId: req.workspaceId!,
+          username,
+          context,
+          addedById: req.user.id
+        });
+
+        if (result.status === 'SUCCESS') {
+          await logActivity({
+            workspaceId: req.workspaceId,
+            userId: req.user.id,
+            action: 'instagram_in_app_approval_verified',
+            target: result.account?.id,
+            status: 'success'
+          });
+        }
+
+        return reply.send(result);
+      } catch (err: any) {
+        req.log.error(err);
+        return reply.code(400).send({
+          status: 'ERROR',
+          message: err.message || 'In-app device approval check failed'
         });
       }
     });

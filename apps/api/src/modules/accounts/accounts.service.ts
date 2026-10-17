@@ -225,6 +225,7 @@ export async function verifyInstagramTwoFactor(params: {
   username: string;
   code: string;
   context?: string;
+  method?: string;
   addedById: string;
 }) {
   const { InstagramBloksClient } = await import('../../providers/instagram/instagram-client');
@@ -238,7 +239,7 @@ export async function verifyInstagramTwoFactor(params: {
     client = new InstagramBloksClient(cleanUsername);
   }
 
-  const result = await client.verifyTwoFactorCode(params.code, params.context);
+  const result = await client.verifyTwoFactorCode(params.code, params.context, params.method);
 
   if (result.status === 'SUCCESS' && result.authorizationToken) {
     pendingClients.delete(key);
@@ -280,7 +281,98 @@ export async function verifyInstagramTwoFactor(params: {
   return {
     status: result.status,
     message: result.message || 'Two-factor code verification failed',
-    context: result.context || client.serializeState()
+    context: result.context || client.serializeState(),
+    errorCode: result.errorCode,
+  };
+}
+
+export async function resendInstagramTwoFactorCode(params: {
+  workspaceId: string;
+  username: string;
+  context?: string;
+  method?: 'sms' | 'whatsapp';
+}) {
+  const { InstagramBloksClient } = await import('../../providers/instagram/instagram-client');
+  const cleanUsername = params.username.replace(/^@/, '').trim();
+  const key = `${params.workspaceId}:${cleanUsername.toLowerCase()}`;
+  let client = pendingClients.get(key);
+
+  if (!client && params.context) {
+    client = InstagramBloksClient.deserializeState(params.context, cleanUsername);
+  } else if (!client) {
+    client = new InstagramBloksClient(cleanUsername);
+  }
+
+  const result = await client.resendTwoFactorCode(params.method || 'sms');
+  pendingClients.set(key, client);
+
+  return {
+    ...result,
+    context: client.serializeState(),
+  };
+}
+
+export async function pollInstagramApproval(params: {
+  workspaceId: string;
+  username: string;
+  context?: string;
+  addedById: string;
+}) {
+  const { InstagramBloksClient } = await import('../../providers/instagram/instagram-client');
+  const cleanUsername = params.username.replace(/^@/, '').trim();
+  const key = `${params.workspaceId}:${cleanUsername.toLowerCase()}`;
+  let client = pendingClients.get(key);
+
+  if (!client && params.context) {
+    client = InstagramBloksClient.deserializeState(params.context, cleanUsername);
+  } else if (!client) {
+    client = new InstagramBloksClient(cleanUsername);
+  }
+
+  const result = await client.checkInAppApproval();
+
+  if (result.status === 'SUCCESS' && result.authorizationToken) {
+    pendingClients.delete(key);
+    const { encrypt } = await import('../../services/encryption.service');
+    const encryptedToken = encrypt(result.authorizationToken);
+
+    const existing = await db.instagramAccount.findFirst({
+      where: { workspaceId: params.workspaceId, username: cleanUsername }
+    });
+
+    let account;
+    if (existing) {
+      account = await db.instagramAccount.update({
+        where: { id: existing.id },
+        data: {
+          status: 'CONNECTED',
+          encryptedToken,
+          lastCheckedAt: new Date(),
+          statusMessage: result.sessionId ? `Session active: ${result.sessionId.slice(0, 10)}...` : 'Session connected'
+        }
+      });
+    } else {
+      account = await db.instagramAccount.create({
+        data: {
+          workspaceId: params.workspaceId,
+          username: cleanUsername,
+          status: 'CONNECTED',
+          encryptedToken,
+          addedById: params.addedById,
+          lastCheckedAt: new Date(),
+          statusMessage: result.sessionId ? `Session active: ${result.sessionId.slice(0, 10)}...` : 'Session connected'
+        }
+      });
+    }
+
+    return { status: 'SUCCESS', account };
+  }
+
+  return {
+    status: result.status,
+    message: result.message || 'Device approval check pending',
+    context: result.context || client.serializeState(),
+    errorCode: result.errorCode,
   };
 }
 
