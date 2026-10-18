@@ -3,9 +3,21 @@ import crypto from 'crypto';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 
-export function normalizeProxyUrl(rawProxy?: string): string | undefined {
-  if (!rawProxy || typeof rawProxy !== 'string') return undefined;
-  let p = rawProxy.trim();
+export const BUILTIN_PROXY_POOL = [
+  '45.38.107.97:6014:krxmmzcq:6mnj799j8ohl',
+  '64.137.96.74:6641:krxmmzcq:6mnj799j8ohl',
+  '198.23.243.226:6361:krxmmzcq:6mnj799j8ohl',
+  '38.154.185.97:6370:krxmmzcq:6mnj799j8ohl',
+  '84.247.60.125:6095:krxmmzcq:6mnj799j8ohl',
+  '191.96.254.138:6185:krxmmzcq:6mnj799j8ohl',
+  '198.46.161.42:5092:krxmmzcq:6mnj799j8ohl',
+  '64.137.10.153:5803:krxmmzcq:6mnj799j8ohl',
+  '104.164.49.38:7693:krxmmzcq:6mnj799j8ohl',
+  '23.26.71.145:5628:krxmmzcq:6mnj799j8ohl',
+];
+
+export function normalizeSingleProxy(raw: string): string | undefined {
+  let p = raw.trim();
   if (!p) return undefined;
 
   const parts = p.split(':');
@@ -25,8 +37,20 @@ export function normalizeProxyUrl(rawProxy?: string): string | undefined {
   return p;
 }
 
+export function normalizeProxyUrl(rawProxy?: string): string | undefined {
+  let source = rawProxy || process.env.INSTAGRAM_PROXY || process.env.DEFAULT_PROXY;
+  if (!source || source.trim() === '') {
+    source = BUILTIN_PROXY_POOL[Math.floor(Math.random() * BUILTIN_PROXY_POOL.length)];
+  }
+
+  const list = source.split(/[\r\n,;]+/).map(s => s.trim()).filter(Boolean);
+  if (list.length === 0) return undefined;
+  const picked = list.length === 1 ? list[0] : list[Math.floor(Math.random() * list.length)];
+  return normalizeSingleProxy(picked);
+}
+
 export function createProxyAgent(rawProxy?: string) {
-  const p = normalizeProxyUrl(rawProxy || process.env.INSTAGRAM_PROXY || process.env.DEFAULT_PROXY);
+  const p = normalizeProxyUrl(rawProxy);
   if (!p) return undefined;
   try {
     if (p.startsWith('socks')) {
