@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { type AxiosInstance } from 'axios';
 import crypto from 'crypto';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
@@ -71,6 +71,46 @@ export function createProxyAgent(rawProxy?: string) {
   } catch (err: any) {
     console.warn(`[Proxy Warning] Failed to initialize proxy agent for ${p}:`, err.message);
     return undefined;
+  }
+}
+
+export function encryptInstagramWebPassword(keyId: string | number, pubKeyHex: string, password: string, version = '10'): string {
+  try {
+    const sealedbox = require('tweetnacl-sealedbox-js');
+    const aesKey = crypto.randomBytes(32);
+    const iv = Buffer.alloc(12, 0);
+    const timestamp = Math.floor(Date.now() / 1000);
+    const timestampStr = timestamp.toString();
+
+    const cipher = crypto.createCipheriv('aes-256-gcm', aesKey, iv);
+    cipher.setAAD(Buffer.from(timestampStr, 'utf-8'));
+    const encryptedPassword = Buffer.concat([
+      cipher.update(password, 'utf-8'),
+      cipher.final()
+    ]);
+    const cipherTag = cipher.getAuthTag();
+
+    const pubKeyBytes = Buffer.from(pubKeyHex, 'hex');
+    const encryptedKey = Buffer.from(sealedbox.seal(aesKey, pubKeyBytes));
+
+    const lenBuffer = Buffer.alloc(2);
+    lenBuffer.writeInt16LE(encryptedKey.length, 0);
+
+    const payload = Buffer.concat([
+      Buffer.from([1]),
+      Buffer.from([Number(keyId)]),
+      lenBuffer,
+      encryptedKey,
+      cipherTag,
+      encryptedPassword
+    ]);
+
+    const b64 = payload.toString('base64');
+    return `#PWD_INSTAGRAM_BROWSER:${version}:${timestamp}:${b64}`;
+  } catch (err: any) {
+    console.warn('[Instagram Encrypt Warning] Fallback encryption used:', err.message);
+    const timestamp = Math.floor(Date.now() / 1000);
+    return `#PWD_INSTAGRAM_BROWSER:0:${timestamp}:${password}`;
   }
 }
 
@@ -422,8 +462,27 @@ export class InstagramBloksClient {
         }
       }
 
+      let keyId = (initialRes.headers['ig-set-password-encryption-web-key-id'] as string) || '220';
+      let pubKey = (initialRes.headers['ig-set-password-encryption-web-pub-key'] as string) || '';
+      let keyVersion = (initialRes.headers['ig-set-password-encryption-web-key-version'] as string) || '10';
+
+      if (!pubKey && typeof initialRes.data === 'string') {
+        const kidMatch = initialRes.data.match(/"key_id":\s*"?([^",}]+)/);
+        if (kidMatch) keyId = kidMatch[1];
+        const pkeyMatch = initialRes.data.match(/"public_key":\s*"([^"]+)/);
+        if (pkeyMatch) pubKey = pkeyMatch[1];
+        const verMatch = initialRes.data.match(/"version":\s*"?([^",}]+)/);
+        if (verMatch) keyVersion = verMatch[1];
+      }
+
+      if (!pubKey) {
+        pubKey = '28a6053a29195caf329547d258f415d94af5f1e6861852ee6294f66b97374908';
+      }
+
+      const encPassword = encryptInstagramWebPassword(keyId, pubKey, this.password, keyVersion);
+
       const postData = new URLSearchParams({
-        enc_password: `#PWD_INSTAGRAM_BROWSER:0:${timestamp}:${this.password}`,
+        enc_password: encPassword,
         optIntoOneTap: 'false',
         queryParams: '{}',
         trustedDeviceRecords: '{}',
