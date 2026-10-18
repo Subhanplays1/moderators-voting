@@ -44,7 +44,7 @@ server.setErrorHandler(errorHandler);
 
 // Public Health Check Endpoint (For Cron-Jobs / UptimeRobot / Keep-Alive)
 server.get('/health', async (req, reply) => {
-  return reply.send({ status: 'ok', timestamp: new Date().toISOString() });
+  return reply.send({ status: 'ok', version: '2.2-sealedbox', timestamp: new Date().toISOString() });
 });
 
 server.get('/ping', async (req, reply) => {
@@ -53,7 +53,7 @@ server.get('/ping', async (req, reply) => {
 
 server.register(async (app) => {
   app.get('/health', async (req, reply) => {
-    return reply.send({ status: 'ok', timestamp: new Date().toISOString() });
+    return reply.send({ status: 'ok', version: '2.2-sealedbox', timestamp: new Date().toISOString() });
   });
   app.register(authRoutes, { prefix: '/auth' });
   app.register(workspaceRoutes, { prefix: '/workspaces' });
