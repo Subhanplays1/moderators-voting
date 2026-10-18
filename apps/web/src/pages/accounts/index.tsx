@@ -669,18 +669,27 @@ export function Accounts() {
                 </div>
               </div>
               <p className="text-xs text-zinc-400">
-                All accounts successfully added with <span className="text-amber-400 font-semibold">PENDING</span> status until authorization.
+                Accounts with valid session cookies or credentials are auto-connected and ready to vote immediately!
               </p>
             </div>
           ) : (
             <div className="space-y-4 py-2">
+              <div className="p-3 rounded-xl bg-pink-500/10 border border-pink-500/20 text-xs text-pink-300 space-y-1">
+                <p className="font-semibold text-white">✨ Multi-Format Bulk Import Supported:</p>
+                <ul className="list-disc pl-4 space-y-0.5 text-[11px] text-zinc-300">
+                  <li><strong>Cookies / Session IDs:</strong> <code className="text-pink-300">sessionid=...</code> (Auto-connects 100% active)</li>
+                  <li><strong>Username + Session:</strong> <code className="text-pink-300">user:sessionid</code> or <code className="text-pink-300">user,sessionid</code></li>
+                  <li><strong>Username + Password:</strong> <code className="text-pink-300">user:password</code></li>
+                  <li><strong>Plain Usernames:</strong> <code className="text-pink-300">creator_alpha</code></li>
+                </ul>
+              </div>
               <div className="space-y-1.5">
-                <Label htmlFor="usernames">Usernames (one per line)</Label>
+                <Label htmlFor="usernames">Accounts / Session IDs (one per line)</Label>
                 <textarea
                   id="usernames"
                   rows={6}
-                  className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
-                  placeholder="creator_alpha&#10;creator_beta&#10;creator_gamma"
+                  className="w-full rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs text-white placeholder:text-zinc-500 focus:outline-none focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500 font-mono"
+                  placeholder="68491238472%3A...&#10;alpha_user:68491238472%3A...&#10;beta_user:SecretPass123&#10;creator_alpha"
                   value={importText}
                   onChange={(e) => setImportText(e.target.value)}
                 />

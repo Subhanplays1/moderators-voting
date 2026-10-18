@@ -30,22 +30,73 @@ export async function createAccount(workspaceId: string, data: any, addedById: s
 
 export async function importAccounts(workspaceId: string, csvBuffer: Buffer, addedById: string) {
   const content = csvBuffer.toString();
-  let usernames: string[] = [];
-
-  // Try parsing CSV, otherwise split by newlines
-  try {
-    const records = parse(content, { columns: true, skip_empty_lines: true });
-    usernames = records.map((r: any) => r.username || Object.values(r)[0]).filter(Boolean);
-  } catch {
-    usernames = content.split('\n').map(l => l.trim()).filter(Boolean);
-  }
+  const rawLines = content.split('\n').map(l => l.trim()).filter(Boolean);
 
   let valid = 0;
   let duplicates = 0;
   let invalid = 0;
 
-  for (const raw of usernames) {
-    const username = String(raw).replace(/^@/, '').trim();
+  for (const rawLine of rawLines) {
+    if (!rawLine || rawLine.startsWith('username,') || rawLine.toLowerCase() === 'username') continue;
+
+    // Check Format 1: username:sessionid or username,sessionid or cookie
+    const parts = rawLine.includes(',') 
+      ? rawLine.split(',') 
+      : (rawLine.includes(':') && !rawLine.startsWith('sessionid') && !rawLine.includes('%3A') 
+          ? rawLine.split(':') 
+          : [rawLine]);
+    
+    // Check if line is a Session ID or Cookie
+    const isCookieOrSession = rawLine.includes('sessionid') || rawLine.includes('%3A') || (rawLine.length > 30 && !rawLine.includes(' '));
+
+    if (isCookieOrSession) {
+      try {
+        let extractedSession = rawLine;
+        let specifiedUser = undefined;
+
+        if (parts.length >= 2 && /^[a-zA-Z0-9._]+$/.test(parts[0].replace(/^@/, '').trim())) {
+          specifiedUser = parts[0].replace(/^@/, '').trim();
+          extractedSession = parts.slice(1).join(':').trim();
+        }
+
+        const res = await connectWithSessionId({
+          workspaceId,
+          sessionId: extractedSession,
+          username: specifiedUser,
+          addedById
+        });
+
+        if (res.status === 'SUCCESS') {
+          valid++;
+          continue;
+        }
+      } catch (e) {
+        console.warn('[Import Accounts] Cookie connection failed for line:', e);
+      }
+    }
+
+    // Check Format 2: username:password
+    if (parts.length === 2 && !isCookieOrSession) {
+      const u = parts[0].replace(/^@/, '').trim();
+      const p = parts[1].trim();
+      if (/^[a-zA-Z0-9._]+$/.test(u)) {
+        try {
+          const res = await loginInstagramDirect({
+            workspaceId,
+            username: u,
+            password: p,
+            addedById
+          });
+          if (res.status === 'SUCCESS') {
+            valid++;
+            continue;
+          }
+        } catch {}
+      }
+    }
+
+    // Fallback: Plain username
+    const username = String(parts[0] || rawLine).replace(/^@/, '').trim();
     if (!username || !/^[a-zA-Z0-9._]+$/.test(username)) {
       invalid++;
       continue;
@@ -68,7 +119,7 @@ export async function importAccounts(workspaceId: string, csvBuffer: Buffer, add
     valid++;
   }
 
-  return { total: usernames.length, valid, duplicates, invalid };
+  return { total: rawLines.length, valid, duplicates, invalid };
 }
 
 export async function connectAccount(workspaceId: string, id: string) {
