@@ -20,6 +20,13 @@ export function normalizeSingleProxy(raw: string): string | undefined {
   let p = raw.trim();
   if (!p) return undefined;
 
+  // Webshare backbone rotator (p.webshare.io) gives 407 error on basic accounts.
+  // Auto-redirect to one of the 10 verified dedicated Webshare IPs!
+  if (p.includes('p.webshare.io') || p.includes('webshare.io:80')) {
+    const fallback = BUILTIN_PROXY_POOL[Math.floor(Math.random() * BUILTIN_PROXY_POOL.length)];
+    return normalizeSingleProxy(fallback);
+  }
+
   const parts = p.split(':');
   if (parts.length === 4 && !p.includes('://')) {
     const [host, port, user, pass] = parts;
@@ -40,6 +47,10 @@ export function normalizeSingleProxy(raw: string): string | undefined {
 export function normalizeProxyUrl(rawProxy?: string): string | undefined {
   let source = rawProxy || process.env.INSTAGRAM_PROXY || process.env.DEFAULT_PROXY;
   if (!source || source.trim() === '') {
+    source = BUILTIN_PROXY_POOL[Math.floor(Math.random() * BUILTIN_PROXY_POOL.length)];
+  }
+
+  if (source.includes('p.webshare.io') || source.includes('webshare.io:80')) {
     source = BUILTIN_PROXY_POOL[Math.floor(Math.random() * BUILTIN_PROXY_POOL.length)];
   }
 

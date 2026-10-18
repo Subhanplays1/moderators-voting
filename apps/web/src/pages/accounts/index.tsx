@@ -986,18 +986,18 @@ export function Accounts() {
                     <div className="flex items-center justify-between">
                       <Label htmlFor="ig-proxy" className="text-xs text-zinc-300 flex items-center gap-1.5">
                         <Globe size={13} className="text-cyan-400" />
-                        <span>Residential / Mobile Proxy <span className="text-zinc-500 font-normal">(Optional - Bypasses Cloud IP flags)</span></span>
+                        <span>Residential / Mobile Proxy <span className="text-emerald-400 font-normal">(10 Built-in Rotating Proxies Active ✅)</span></span>
                       </Label>
                     </div>
                     <Input
                       id="ig-proxy"
-                      placeholder="e.g. http://user:pass@host:port or host:port:user:pass"
+                      placeholder="Leave empty to use built-in rotating proxies, or paste custom IP:PORT:USER:PASS"
                       value={loginProxy}
                       onChange={(e) => setLoginProxy(e.target.value)}
                       className="h-9 bg-zinc-900 border-white/10 text-white placeholder:text-zinc-600 text-xs font-mono"
                     />
-                    <p className="text-[11px] text-zinc-500 leading-relaxed">
-                      Cloud hosting IPs (Render AWS/Germany) par Instagram account recovery mangta hai. Agar login fail ho, yahan apna residential proxy daalein ya Render environment variables me <code className="text-cyan-400 font-mono">INSTAGRAM_PROXY</code> set karein.
+                    <p className="text-[11px] text-zinc-400 leading-relaxed">
+                      💡 <strong>Proxy khali chor dein</strong> — system khud aapki 10 Webshare proxies me se rotate kar ke Instagram se connect karega. Webshare ke domain <code className="text-amber-400 font-mono">p.webshare.io</code> par 407 error aata hai, isliye direct IP:Port format use hota hai.
                     </p>
                   </div>
 
