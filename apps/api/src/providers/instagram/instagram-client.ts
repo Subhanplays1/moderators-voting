@@ -1,5 +1,43 @@
-import axios from 'axios';
+import axios, { AxiosInstance } from 'axios';
 import crypto from 'crypto';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { SocksProxyAgent } from 'socks-proxy-agent';
+
+export function normalizeProxyUrl(rawProxy?: string): string | undefined {
+  if (!rawProxy || typeof rawProxy !== 'string') return undefined;
+  let p = rawProxy.trim();
+  if (!p) return undefined;
+
+  const parts = p.split(':');
+  if (parts.length === 4 && !p.includes('://')) {
+    const [host, port, user, pass] = parts;
+    return `http://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${host}:${port}`;
+  }
+
+  if (parts.length === 2 && !p.includes('://')) {
+    return `http://${p}`;
+  }
+
+  if (!p.startsWith('http://') && !p.startsWith('https://') && !p.startsWith('socks5://') && !p.startsWith('socks4://')) {
+    return `http://${p}`;
+  }
+
+  return p;
+}
+
+export function createProxyAgent(rawProxy?: string) {
+  const p = normalizeProxyUrl(rawProxy || process.env.INSTAGRAM_PROXY || process.env.DEFAULT_PROXY);
+  if (!p) return undefined;
+  try {
+    if (p.startsWith('socks')) {
+      return new SocksProxyAgent(p);
+    }
+    return new HttpsProxyAgent(p);
+  } catch (err: any) {
+    console.warn(`[Proxy Warning] Failed to initialize proxy agent for ${p}:`, err.message);
+    return undefined;
+  }
+}
 
 export interface InstagramLoginResult {
   status: 'SUCCESS' | '2FA' | 'SECURE_CHALLENGE' | 'BAD_CREDENTIALS' | 'PENDING_APPROVAL' | 'ERROR';
@@ -21,6 +59,8 @@ export class InstagramBloksClient {
   private baseUserAgent = 'Instagram 361.0.0.46.88 Android (28/9; 300dpi; 900x1600; Asus; ASUS_Z01QD; ASUS_Z01QD; intel; en_US; 674675155)';
   private baseBlocksVersioningId = '16e9197b928710eafdf1e803935ed8c450a1a2e3eb696bff1184df088b900bcf';
 
+  public http: AxiosInstance;
+  public proxy?: string;
   public currentDataContext = '';
   public challengeType: '2FA' | 'SECURE_CHALLENGE' | 'NAV_CHALLENGE' | 'WEB_2FA' | 'MOBILE_2FA' | 'WEB_CHECKPOINT' = '2FA';
   public mobileTwoFactorIdentifier = '';
@@ -30,9 +70,10 @@ export class InstagramBloksClient {
   public currentHeaderMid = '';
   public currentChallengeUrl = '';
 
-  constructor(username: string, password = '', restoredState?: any) {
+  constructor(username: string, password = '', restoredState?: any, proxy?: string) {
     this.username = username.replace(/^@/, '').trim();
     this.password = password;
+    this.proxy = proxy || restoredState?.proxy || undefined;
     
     if (restoredState) {
       this.baseDeviceId = restoredState.baseDeviceId || 'android-ec40bd6622ac9b21';
@@ -68,11 +109,23 @@ export class InstagramBloksClient {
         hash.slice(52, 64)
       ].join('-');
     }
+
+    const agent = createProxyAgent(this.proxy);
+    this.http = axios.create({
+      ...(agent ? { httpsAgent: agent, httpAgent: agent, proxy: false as const } : {}),
+      validateStatus: () => true,
+    });
+  }
+
+  public getAxiosAgentConfig() {
+    const agent = createProxyAgent(this.proxy);
+    return agent ? { httpsAgent: agent, httpAgent: agent, proxy: false as const } : {};
   }
 
   public serializeState(): string {
     return Buffer.from(JSON.stringify({
       username: this.username,
+      proxy: this.proxy,
       baseDeviceId: this.baseDeviceId,
       baseMachineId: this.baseMachineId,
       baseHeaderDeviceId: this.baseHeaderDeviceId,
@@ -88,12 +141,12 @@ export class InstagramBloksClient {
     })).toString('base64');
   }
 
-  public static deserializeState(contextStr: string, username: string, password = ''): InstagramBloksClient {
+  public static deserializeState(contextStr: string, username: string, password = '', proxy?: string): InstagramBloksClient {
     try {
       const parsed = JSON.parse(Buffer.from(contextStr, 'base64').toString('utf8'));
-      return new InstagramBloksClient(username || parsed.username, password, parsed);
+      return new InstagramBloksClient(username || parsed.username, password, parsed, proxy || parsed.proxy);
     } catch {
-      const client = new InstagramBloksClient(username, password);
+      const client = new InstagramBloksClient(username, password, undefined, proxy);
       client.currentDataContext = contextStr;
       return client;
     }
@@ -165,34 +218,143 @@ export class InstagramBloksClient {
   }
 
   async sendLoginRequest(): Promise<InstagramLoginResult> {
-    console.log(`[Instagram Login] Attempting authentic Web AJAX direct login for @${this.username}...`);
+    console.log(`[Instagram Login] Attempting multi-engine direct login for @${this.username} (Proxy: ${this.proxy || 'Default/Direct'})...`);
 
-    // 1. Primary: Official Instagram Web AJAX Login (Supports 2FA TOTP/SMS, Checkpoint, and clean credentials verification)
+    // 1. Primary Engine: Official Instagram Web AJAX Login
     const webResult = await this.tryWebLoginFallback();
-    if (
-      webResult.status === 'SUCCESS' ||
-      webResult.status === '2FA' ||
-      webResult.status === 'SECURE_CHALLENGE' ||
-      webResult.status === 'BAD_CREDENTIALS'
-    ) {
+    if (webResult.status === 'SUCCESS' || webResult.status === '2FA' || webResult.status === 'SECURE_CHALLENGE') {
       return webResult;
     }
 
-    // 2. Secondary Fallback: Mobile Bloks Login (Attempted if Web AJAX experienced a network error)
-    console.log(`[Instagram Login] Web login returned ${webResult.status}: ${webResult.message}. Attempting Mobile Bloks fallback...`);
+    // 2. Secondary Engine: Classic Instagram Mobile Signed Android API (masslooker standard)
+    console.log(`[Instagram Login] Web login returned ${webResult.status} (${webResult.message}). Trying Classic Signed Mobile API...`);
+    const classicResult = await this.sendClassicSignedLogin();
+    if (classicResult.status === 'SUCCESS' || classicResult.status === '2FA' || classicResult.status === 'SECURE_CHALLENGE') {
+      return classicResult;
+    }
+
+    // 3. Tertiary Engine: Mobile Bloks CAA Login
+    console.log(`[Instagram Login] Classic login returned ${classicResult.status}. Trying Mobile Bloks CAA fallback...`);
     const bloksResult = await this.sendMobileBloksLogin();
-    if (
-      bloksResult.status === 'SUCCESS' ||
-      bloksResult.status === '2FA' ||
-      bloksResult.status === 'SECURE_CHALLENGE' ||
-      bloksResult.status === 'BAD_CREDENTIALS'
-    ) {
+    if (bloksResult.status === 'SUCCESS' || bloksResult.status === '2FA' || bloksResult.status === 'SECURE_CHALLENGE') {
       return bloksResult;
     }
 
+    // Return the clearest error response
+    if (classicResult.status === 'BAD_CREDENTIALS') return classicResult;
+    if (webResult.status === 'BAD_CREDENTIALS') return webResult;
+    return bloksResult;
+  }
+
+  /**
+   * Engine 2: Classic Instagram Mobile Signed API Login (Android private API standard)
+   */
+  async sendClassicSignedLogin(): Promise<InstagramLoginResult> {
+    const IG_SIG_KEY = '19ce5f445dbfd9d29c59dc2a78c616a7fc090a8e018b9267bc4240a30244c53b';
+    const timestamp = Math.floor(Date.now() / 1000);
+
+    try {
+      const payload = {
+        country_codes: '[{"country_code":"1","source":["default"]}]',
+        phone_id: this.baseHeaderDeviceId,
+        device_id: this.baseDeviceId,
+        guid: this.baseHeaderDeviceId,
+        username: this.username,
+        password: this.password,
+        enc_password: `#PWD_INSTAGRAM:0:${timestamp}:${this.password}`,
+        login_attempt_count: '0',
+      };
+      const jsonPayload = JSON.stringify(payload);
+      const signature = crypto.createHmac('sha256', IG_SIG_KEY).update(jsonPayload).digest('hex');
+      const postBody = `ig_sig_key_version=4&signed_body=${signature}.${encodeURIComponent(jsonPayload)}`;
+
+      const res = await this.http.post('https://i.instagram.com/api/v1/accounts/login/', postBody, {
+        headers: {
+          'User-Agent': this.baseUserAgent,
+          'Accept-Language': 'en-US',
+          'X-IG-Connection-Type': 'WIFI',
+          'X-IG-Capabilities': '36r/Fx8=',
+          'X-IG-App-ID': '936619743392459',
+          'Cookie': this.formatCookieHeader(),
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        },
+        ...this.getAxiosAgentConfig(),
+        validateStatus: () => true,
+      });
+
+      const setCookies = res.headers['set-cookie'] || [];
+      if (Array.isArray(setCookies)) {
+        this.webCookies.push(...setCookies);
+      }
+
+      let foundSessionId = '';
+      for (const c of this.webCookies) {
+        const m = c.match(/sessionid=([^;]+)/);
+        if (m) foundSessionId = m[1];
+      }
+
+      const authHeader = (res.headers['ig-set-authorization'] as string) || '';
+
+      if (res.data?.status === 'ok' && (foundSessionId || res.data?.logged_in_user || authHeader)) {
+        const authTok = authHeader || `Bearer IGT:2:${Buffer.from(JSON.stringify({ 
+          sessionid: foundSessionId,
+          user: res.data?.logged_in_user,
+          proxy: this.proxy,
+        })).toString('base64')}`;
+        return {
+          status: 'SUCCESS',
+          authorizationToken: authTok,
+          sessionId: foundSessionId,
+        };
+      }
+
+      // Check for 2FA
+      if (res.data?.two_factor_required) {
+        const twoFactorInfo = res.data.two_factor_info;
+        this.mobileTwoFactorIdentifier = twoFactorInfo?.two_factor_identifier || '';
+        this.currentDataContext = this.mobileTwoFactorIdentifier;
+        this.challengeType = 'MOBILE_2FA';
+        return {
+          status: '2FA',
+          context: this.serializeState(),
+          message: 'Two-Factor verification required. Enter the 6-digit code sent to your Authenticator App or SMS.',
+        };
+      }
+
+      // Check for Checkpoint
+      if (res.data?.message === 'checkpoint_required' || res.data?.checkpoint_url) {
+        this.currentChallengeUrl = res.data?.checkpoint_url || '';
+        this.challengeType = 'SECURE_CHALLENGE';
+        return {
+          status: 'SECURE_CHALLENGE',
+          context: this.serializeState(),
+          message: 'Instagram security verification checkpoint triggered. Enter code from your phone/email.',
+        };
+      }
+
+      // Explicit bad password
+      if (res.data?.error_type === 'bad_password' || res.data?.message?.toLowerCase().includes('password')) {
+        return {
+          status: 'BAD_CREDENTIALS',
+          errorCode: 'WRONG_PASSWORD',
+          message: 'The password you entered is incorrect. Please try again.',
+        };
+      }
+
+      if (res.data?.message?.toLowerCase().includes('wait a few minutes')) {
+        return {
+          status: 'ERROR',
+          errorCode: 'RATE_LIMITED',
+          message: 'Instagram rate limit: Please wait a few minutes before trying again.',
+        };
+      }
+    } catch (err: any) {
+      console.warn(`[Instagram Classic Login Warning]: ${err.message}`);
+    }
+
     return {
-      status: webResult.status || 'BAD_CREDENTIALS',
-      message: webResult.message || bloksResult.message || 'Instagram authentication failed. Please check your username and password.',
+      status: 'ERROR',
+      message: 'Classic signed login attempt bypassed.',
     };
   }
 
@@ -202,12 +364,13 @@ export class InstagramBloksClient {
   async tryWebLoginFallback(): Promise<InstagramLoginResult> {
     try {
       const timestamp = Math.floor(Date.now() / 1000);
-      const initialRes = await axios.get('https://www.instagram.com/accounts/login/', {
+      const initialRes = await this.http.get('https://www.instagram.com/accounts/login/', {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.9',
         },
+        ...this.getAxiosAgentConfig(),
         maxRedirects: 5,
         validateStatus: () => true,
       });
@@ -232,7 +395,7 @@ export class InstagramBloksClient {
         username: this.username,
       });
 
-      const loginRes = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/', postData.toString(), {
+      const loginRes = await this.http.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/', postData.toString(), {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
           'X-CSRFToken': csrfToken,
@@ -245,6 +408,7 @@ export class InstagramBloksClient {
           'Content-Type': 'application/x-www-form-urlencoded',
           'Cookie': this.formatCookieHeader(),
         },
+        ...this.getAxiosAgentConfig(),
         validateStatus: () => true,
       });
 
@@ -299,7 +463,7 @@ export class InstagramBloksClient {
         console.log(`[Instagram Web Login] Checkpoint encountered: ${this.webCheckpointUrl}`);
 
         try {
-          const challengePageRes = await axios.get(this.webCheckpointUrl, {
+          const challengePageRes = await this.http.get(this.webCheckpointUrl, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
               'Cookie': this.formatCookieHeader(),
@@ -326,7 +490,7 @@ export class InstagramBloksClient {
             const choice = stepData.email ? '1' : '0';
             console.log(`[Instagram Checkpoint] Auto-selecting verification method choice=${choice}...`);
             const choicePost = new URLSearchParams({ choice });
-            const dispatchRes = await axios.post(this.webCheckpointUrl, choicePost.toString(), {
+            const dispatchRes = await this.http.post(this.webCheckpointUrl, choicePost.toString(), {
               headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
                 'Cookie': this.formatCookieHeader(),
@@ -491,7 +655,7 @@ export class InstagramBloksClient {
       );
       postData.append('bloks_versioning_id', this.baseBlocksVersioningId);
 
-      const res = await axios.post(
+      const res = await this.http.post(
         `${this.baseUrl}com.bloks.www.bloks.caa.login.async.send_login_request/`,
         postData.toString(),
         {
@@ -650,7 +814,7 @@ export class InstagramBloksClient {
       );
       postData1.append('bloks_versioning_id', this.baseBlocksVersioningId);
 
-      const res1 = await axios.post(
+      const res1 = await this.http.post(
         `${this.baseUrl}com.bloks.www.ap.two_step_verification.entrypoint_async/`,
         postData1.toString(),
         {
@@ -687,7 +851,7 @@ export class InstagramBloksClient {
       );
       postData2.append('bloks_versioning_id', this.baseBlocksVersioningId);
 
-      const res2 = await axios.post(
+      const res2 = await this.http.post(
         `${this.baseUrl}com.bloks.www.ap.two_step_verification.code_entry/`,
         postData2.toString(),
         {
@@ -753,7 +917,7 @@ export class InstagramBloksClient {
     );
     postData.append('bloks_versioning_id', this.baseBlocksVersioningId);
 
-    const res = await axios.post(
+    const res = await this.http.post(
       `${this.baseUrl}com.bloks.www.ap.two_step_verification.code_entry_async/`,
       postData.toString(),
       {
@@ -795,7 +959,7 @@ export class InstagramBloksClient {
           'X-Mid': this.currentHeaderMid || '',
         };
 
-        const res = await axios.get(`${targetUrl}?guid=${this.baseHeaderDeviceId}&device_id=${this.baseDeviceId}&challenge_context=${this.currentDataContext}`, {
+        const res = await this.http.get(`${targetUrl}?guid=${this.baseHeaderDeviceId}&device_id=${this.baseDeviceId}&challenge_context=${this.currentDataContext}`, {
           headers,
           validateStatus: () => true,
         });
@@ -816,7 +980,7 @@ export class InstagramBloksClient {
         bloks_versioning_id: this.baseBlocksVersioningId,
       });
 
-      const dispatchRes = await axios.post(`${this.baseUrl}com.instagram.challenge.navigation.take_challenge/`, payload.toString(), {
+      const dispatchRes = await this.http.post(`${this.baseUrl}com.instagram.challenge.navigation.take_challenge/`, payload.toString(), {
         headers: {
           ...this.getHeaders(),
           'X-Mid': this.currentHeaderMid || '',
@@ -849,7 +1013,7 @@ export class InstagramBloksClient {
         bloks_versioning_id: this.baseBlocksVersioningId,
       });
 
-      const res = await axios.post(`${this.baseUrl}com.instagram.challenge.navigation.take_challenge/`, payload.toString(), {
+      const res = await this.http.post(`${this.baseUrl}com.instagram.challenge.navigation.take_challenge/`, payload.toString(), {
         headers: {
           ...this.getHeaders(),
           'X-Mid': this.currentHeaderMid || '',
@@ -908,7 +1072,7 @@ export class InstagramBloksClient {
         const signature = crypto.createHmac('sha256', IG_SIG_KEY).update(jsonPayload).digest('hex');
         const postBody = `ig_sig_key_version=4&signed_body=${signature}.${encodeURIComponent(jsonPayload)}`;
 
-        const response = await axios.post('https://i.instagram.com/api/v1/accounts/two_factor_login/', postBody, {
+        const response = await this.http.post('https://i.instagram.com/api/v1/accounts/two_factor_login/', postBody, {
           headers: {
             'User-Agent': this.baseUserAgent,
             'Accept-Language': 'en-US',
@@ -984,7 +1148,7 @@ export class InstagramBloksClient {
           security_code: cleanCode,
         });
 
-        const verifyRes = await axios.post(targetUrl, postData.toString(), {
+        const verifyRes = await this.http.post(targetUrl, postData.toString(), {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             'Cookie': this.formatCookieHeader(),
@@ -1055,7 +1219,7 @@ export class InstagramBloksClient {
           queryParams: '{}',
         });
 
-        const twoFaRes = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/', postData.toString(), {
+        const twoFaRes = await this.http.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/', postData.toString(), {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             'Cookie': this.formatCookieHeader(),
@@ -1151,7 +1315,7 @@ export class InstagramBloksClient {
     );
     postData.append('bloks_versioning_id', this.baseBlocksVersioningId);
 
-    const res = await axios.post(
+    const res = await this.http.post(
       `${this.baseUrl}com.bloks.www.two_step_verification.verify_code.async/`,
       postData.toString(),
       {
@@ -1201,7 +1365,7 @@ export class InstagramBloksClient {
         verification_method: method === 'whatsapp' ? '6' : '2',
       });
 
-      const res = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/resend/', postData.toString(), {
+      const res = await this.http.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/resend/', postData.toString(), {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
           'Cookie': this.formatCookieHeader(),
@@ -1237,7 +1401,7 @@ export class InstagramBloksClient {
         const signature = crypto.createHmac('sha256', IG_SIG_KEY).update(mobilePayload).digest('hex');
         const mobilePost = `ig_sig_key_version=4&signed_body=${signature}.${encodeURIComponent(mobilePayload)}`;
 
-        const mobileRes = await axios.post('https://i.instagram.com/api/v1/accounts/send_two_factor_login_sms/', mobilePost, {
+        const mobileRes = await this.http.post('https://i.instagram.com/api/v1/accounts/send_two_factor_login_sms/', mobilePost, {
           headers: {
             'User-Agent': this.baseUserAgent,
             'Cookie': this.formatCookieHeader(),
@@ -1276,7 +1440,7 @@ export class InstagramBloksClient {
 
       // 1. If we have a checkpoint URL
       if (this.webCheckpointUrl) {
-        const cpRes = await axios.get(this.webCheckpointUrl, {
+        const cpRes = await this.http.get(this.webCheckpointUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             'Cookie': this.formatCookieHeader(),
@@ -1318,7 +1482,7 @@ export class InstagramBloksClient {
           check_approval: '1',
         });
 
-        const pollRes = await axios.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/', postData.toString(), {
+        const pollRes = await this.http.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/', postData.toString(), {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
             'Cookie': this.formatCookieHeader(),

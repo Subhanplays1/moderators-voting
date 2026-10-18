@@ -20,7 +20,8 @@ import {
   Smartphone,
   MessageSquare,
   Key,
-  CheckCircle
+  CheckCircle,
+  Globe
 } from 'lucide-react';
 import { api } from '@/lib/api';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -59,6 +60,7 @@ export function Accounts() {
   const [sessionUsername, setSessionUsername] = useState('');
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [loginProxy, setLoginProxy] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [twoFactorCode, setTwoFactorCode] = useState('');
   const [twoFactorContext, setTwoFactorContext] = useState('');
@@ -175,6 +177,7 @@ export function Accounts() {
       const res = await api.post('/accounts/login', {
         username: loginUsername.trim(),
         password: loginPassword,
+        proxy: loginProxy.trim() || undefined,
       });
 
       if (res.data.status === 'SUCCESS') {
@@ -352,6 +355,7 @@ export function Accounts() {
     setIsDirectLoginOpen(false);
     setLoginUsername('');
     setLoginPassword('');
+    setLoginProxy('');
     setSessionIdInput('');
     setSessionUsername('');
     setTwoFactorCode('');
@@ -976,6 +980,25 @@ export function Accounts() {
                         className="h-10 bg-zinc-900 border-white/10 text-white placeholder:text-zinc-500 pr-10"
                       />
                     </div>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="ig-proxy" className="text-xs text-zinc-300 flex items-center gap-1.5">
+                        <Globe size={13} className="text-cyan-400" />
+                        <span>Residential / Mobile Proxy <span className="text-zinc-500 font-normal">(Optional - Bypasses Cloud IP flags)</span></span>
+                      </Label>
+                    </div>
+                    <Input
+                      id="ig-proxy"
+                      placeholder="e.g. http://user:pass@host:port or host:port:user:pass"
+                      value={loginProxy}
+                      onChange={(e) => setLoginProxy(e.target.value)}
+                      className="h-9 bg-zinc-900 border-white/10 text-white placeholder:text-zinc-600 text-xs font-mono"
+                    />
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                      Cloud hosting IPs (Render AWS/Germany) par Instagram account recovery mangta hai. Agar login fail ho, yahan apna residential proxy daalein ya Render environment variables me <code className="text-cyan-400 font-mono">INSTAGRAM_PROXY</code> set karein.
+                    </p>
                   </div>
 
                   <div className="p-3 rounded-lg bg-zinc-900/60 border border-white/5 text-[11px] text-zinc-400 space-y-1">

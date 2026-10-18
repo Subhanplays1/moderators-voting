@@ -117,12 +117,13 @@ export default async function accountsRoutes(app: FastifyInstance) {
       schema: { body: InstagramLoginSchema },
       preHandler: [requirePermission('accounts.create')]
     }, async (req, reply) => {
-      const { username, password } = req.body;
+      const { username, password, proxy } = req.body;
       try {
         const result = await accountsService.loginInstagramDirect({
           workspaceId: req.workspaceId!,
           username,
           password,
+          proxy,
           addedById: req.user.id
         });
 

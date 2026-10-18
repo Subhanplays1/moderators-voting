@@ -211,17 +211,29 @@ export async function loginInstagramDirect(params: {
   workspaceId: string;
   username: string;
   password: string;
+  proxy?: string;
   addedById: string;
 }) {
   const { InstagramBloksClient } = await import('../../providers/instagram/instagram-client');
   const cleanUsername = params.username.replace(/^@/, '').trim();
-  const client = new InstagramBloksClient(cleanUsername, params.password);
+  const client = new InstagramBloksClient(cleanUsername, params.password, undefined, params.proxy);
   
   const result = await client.sendLoginRequest();
 
   if (result.status === 'SUCCESS' && result.authorizationToken) {
     const { encrypt } = await import('../../services/encryption.service');
-    const encryptedToken = encrypt(result.authorizationToken);
+    let finalAuthToken = result.authorizationToken;
+    if (params.proxy) {
+      try {
+        if (finalAuthToken.startsWith('Bearer IGT:2:')) {
+          const raw = Buffer.from(finalAuthToken.replace('Bearer IGT:2:', ''), 'base64').toString('utf8');
+          const parsed = JSON.parse(raw);
+          parsed.proxy = params.proxy;
+          finalAuthToken = `Bearer IGT:2:${Buffer.from(JSON.stringify(parsed)).toString('base64')}`;
+        }
+      } catch {}
+    }
+    const encryptedToken = encrypt(finalAuthToken);
 
     const existing = await db.instagramAccount.findFirst({
       where: { workspaceId: params.workspaceId, username: cleanUsername }

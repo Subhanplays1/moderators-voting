@@ -9,7 +9,8 @@ export const ImportAccountsSchema = z.object({});
 
 export const InstagramLoginSchema = z.object({
   username: z.string().min(1),
-  password: z.string().min(1)
+  password: z.string().min(1),
+  proxy: z.string().optional()
 });
 
 export const InstagramTwoFactorSchema = z.object({

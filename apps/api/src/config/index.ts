@@ -18,7 +18,9 @@ const envSchema = z.object({
   INSTAGRAM_PROVIDER: z.enum(['mock', 'production']).default('production'),
   INSTAGRAM_APP_ID: z.string().default('3287637704761715'),
   INSTAGRAM_APP_SECRET: z.string().default('a61a914e2a8686314a41c1d2380d8814'),
-  INSTAGRAM_REDIRECT_URI: z.string().default('https://moderators-api.onrender.com/api/accounts/oauth/instagram/callback')
+  INSTAGRAM_REDIRECT_URI: z.string().default('https://moderators-api.onrender.com/api/accounts/oauth/instagram/callback'),
+  INSTAGRAM_PROXY: z.string().optional().default(''),
+  DEFAULT_PROXY: z.string().optional().default('')
 });
 
 const parsed = envSchema.safeParse(process.env);

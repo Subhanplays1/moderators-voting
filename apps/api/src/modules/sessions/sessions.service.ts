@@ -3,6 +3,7 @@ import { getInstagramProvider } from '../../providers/instagram';
 import { wsManager } from '../../websocket/manager';
 import axios from 'axios';
 import crypto from 'crypto';
+import { createProxyAgent } from '../../providers/instagram/instagram-client';
 
 const MODERN_IG_SIG_KEY = '5d406b6939d4fb10d3edb4ac0247d495b697543d3f53195deb269ec016a67911';
 
@@ -21,6 +22,7 @@ async function markStorySeen(params: {
   mediaId: string;
   authorPk?: string;
   takenAt?: number;
+  proxy?: string;
 }): Promise<boolean> {
   try {
     const rawSessionId = params.sessionId.replace(/^sessionid=/, '').replace(/;$/, '').trim();
@@ -45,6 +47,7 @@ async function markStorySeen(params: {
 
     const signature = crypto.createHmac('sha256', MODERN_IG_SIG_KEY).update(seenPayload).digest('hex');
     const signedBody = `ig_sig_key_version=4&signed_body=${signature}.${encodeURIComponent(seenPayload)}`;
+    const agent = createProxyAgent(params.proxy);
 
     const res = await axios.post('https://i.instagram.com/api/v2/media/seen/?reel=1&live_vod=0', signedBody, {
       headers: {
@@ -54,6 +57,7 @@ async function markStorySeen(params: {
         'X-IG-Capabilities': '36r/Fx8=',
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
       },
+      ...(agent ? { httpsAgent: agent, httpAgent: agent, proxy: false as const } : {}),
       validateStatus: () => true,
     });
     console.log(`[Sessions Service] Story ${reelId} marked seen: status ${res.status}`);
@@ -77,12 +81,15 @@ async function submitInstagramStoryVote(params: {
   voteIndex: number;
   authorPk?: string;
   takenAt?: number;
+  proxy?: string;
 }): Promise<{ success: boolean; status?: number; data?: any; error?: string }> {
   const rawSessionId = params.sessionId.replace(/^sessionid=/, '').replace(/;$/, '').trim();
   const uid = rawSessionId.split('%3A')[0] || rawSessionId.split(':')[0] || '';
   const csrf = getCsrfToken(params.sessionId);
   const cleanMediaId = params.mediaId.split('_')[0];
   const cleanPollId = params.pollId;
+  const agent = createProxyAgent(params.proxy);
+  const proxyConfig = agent ? { httpsAgent: agent, httpAgent: agent, proxy: false as const } : {};
 
   // Step 1: Pre-authenticate story viewing (marks reel seen so Instagram algorithm validates engagement)
   await markStorySeen({
@@ -90,6 +97,7 @@ async function submitInstagramStoryVote(params: {
     mediaId: cleanMediaId,
     authorPk: params.authorPk,
     takenAt: params.takenAt,
+    proxy: params.proxy,
   }).catch(() => {});
 
   // Step 2: Primary Engine - Official Instagram Web Story Poll Vote
@@ -113,6 +121,7 @@ async function submitInstagramStoryVote(params: {
           'Cookie': `ds_user_id=${uid}; sessionid=${rawSessionId}; csrftoken=${csrf};`,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
+        ...proxyConfig,
         validateStatus: () => true,
       }
     );
@@ -149,6 +158,7 @@ async function submitInstagramStoryVote(params: {
           'X-IG-Capabilities': '36r/Fx8=',
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         },
+        ...proxyConfig,
         validateStatus: () => true,
       }
     );
@@ -173,6 +183,7 @@ async function submitInstagramStoryVote(params: {
             'Cookie': `ds_user_id=${uid}; sessionid=${rawSessionId}; csrftoken=${csrf};`,
             'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
           },
+          ...proxyConfig,
           validateStatus: () => true,
         }
       );
@@ -418,11 +429,13 @@ async function processSessionAsync(workspaceId: string, sessionId: string) {
       try {
         const decrypted = decrypt(accItem.account.encryptedToken);
         let sessionCookie = '';
+        let accountProxy = '';
         if (decrypted.startsWith('Bearer IGT:2:')) {
           try {
             const rawJson = Buffer.from(decrypted.replace('Bearer IGT:2:', ''), 'base64').toString('utf8');
             const parsed = JSON.parse(rawJson);
             sessionCookie = parsed.sessionid || '';
+            accountProxy = parsed.proxy || '';
           } catch {}
         } else if (decrypted.includes('sessionid=')) {
           const m = decrypted.match(/sessionid=([^;]+)/);
@@ -448,6 +461,7 @@ async function processSessionAsync(workspaceId: string, sessionId: string) {
             pollId,
             voteIndex,
             authorPk: storyUserPk,
+            proxy: accountProxy || undefined,
           });
 
           if (voteRes.success) {
